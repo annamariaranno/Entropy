@@ -1,309 +1,721 @@
-/*
- * conservation-laws.cc
+
+/* ---------------------------------------------------------------------
  *
- *  Created on: Dec 5, 2017
- *      Author: annamaria
+ * Copyright (C) 2013 - 2015 by the deal.II authors
+ *
+ * This file is part of the deal.II library.
+ *
+ * The deal.II library is free software; you can use it, redistribute
+ * it, and/or modify it under the terms of the GNU Lesser General
+ * Public License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ * The full text of the license can be found in the file LICENSE at
+ * the top level of the deal.II distribution.
+ *
+ * ---------------------------------------------------------------------
+
+ *
+ * Author: Wolfgang Bangerth, Texas A&M University, 2013
  */
 
-#include <deal.II/base/function.h>
+
+#include <deal.II/base/utilities.h>
 #include <deal.II/base/quadrature_lib.h>
+#include <deal.II/base/function.h>
+#include <deal.II/base/logstream.h>
+#include <deal.II/lac/vector.h>
+#include <deal.II/lac/full_matrix.h>
+#include <deal.II/lac/dynamic_sparsity_pattern.h>
+#include <deal.II/lac/sparse_matrix.h>
+#include <deal.II/lac/solver_cg.h>
+#include <deal.II/lac/precondition.h>
+#include <deal.II/lac/constraint_matrix.h>
+#include <deal.II/lac/solver_richardson.h>
+#include <deal.II/lac/precondition_block.h>
+#include <deal.II/grid/tria.h>
 #include <deal.II/grid/grid_generator.h>
+#include <deal.II/grid/grid_refinement.h>
+#include <deal.II/grid/grid_out.h>
 #include <deal.II/grid/tria_accessor.h>
 #include <deal.II/grid/tria_iterator.h>
-#include <deal.II/grid/tria_boundary_lib.h>
-#include <deal.II/grid/tria.h>
-#include <deal.II/grid/grid_out.h>
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_accessor.h>
 #include <deal.II/dofs/dof_tools.h>
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_values.h>
-#include <deal.II/lac/constraint_matrix.h>
-#include <deal.II/lac/sparse_direct.h>
-#include <deal.II/numerics/vector_tools.h>
+#include <deal.II/fe/mapping_q1.h>
+#include <deal.II/fe/fe_dgq.h>
 #include <deal.II/numerics/data_out.h>
+#include <deal.II/numerics/vector_tools.h>
+#include <deal.II/numerics/error_estimator.h>
+#include <deal.II/numerics/solution_transfer.h>
+#include <deal.II/numerics/matrix_tools.h>
+#include <deal.II/numerics/derivative_approximation.h>
+
+#include <deal.II/meshworker/dof_info.h>
+#include <deal.II/meshworker/integration_info.h>
+#include <deal.II/meshworker/simple.h>
+#include <deal.II/meshworker/loop.h>
+
 #include <fstream>
 #include <iostream>
-#include <cmath>
-#include <map>
-
-#include <deal.II/base/time_stepping.h>
-#include <deal.II/lac/identity_matrix.h>
 
 
-using namespace dealii;
 
-class InitialValue : public Function<1>
+  using namespace dealii;
+  template <int dim>
+  class InitialValue : public Function<dim>
   {
   public:
-    virtual double value (const Point<1>  &p,
+    virtual double value (const Point<dim>  &p,
                           const unsigned int component = 0) const;
   };
 
 
-
-  double InitialValue::value (const Point<1> &p,
+  template <int dim>
+  double InitialValue<dim>::value (const Point<dim> &p,
                                      const unsigned int component) const
   {
-    Assert(component == 0, ExcInternalError());
-    if(std::abs(2*p[0] - 0.3) - 0.25 < std::pow(10,-8))
-      	return std::exp(-300.0*(std::pow(2*p[0] - 0.3,2)));
-    else if(std::abs(2*p[0] - 0.9) - 0.2 < std::pow(10,-8))
-    	return 1;
-    else if(std::abs(2*p[0] - 1.6) - 0.2 < std::pow(10,-8))
-    	return std::pow(1-(std::pow((2*p[0] - 1.6)/0.2,2)),0.5);
-    else
-    	return 0;
+	  Assert(component == 0, ExcInternalError());
+
+	  if(dim==1)
+	  {
+
+		      if(std::abs(2*p[0] - 0.3) - 0.25 < std::pow(10,-8))
+		        	return std::exp(-300.0*(std::pow(2*p[0] - 0.3,2)));
+		      else if(std::abs(2*p[0] - 0.9) - 0.2 < std::pow(10,-8))
+		      	return 1;
+		      else if(std::abs(2*p[0] - 1.6) - 0.2 < std::pow(10,-8))
+		      	return std::pow(1-(std::pow((2*p[0] - 1.6)/0.2,2)),0.5);
+		      else
+		      	return 0;
+	  }
+	  else
+	  {
+
+		  double a = 0.3;
+		  double r0 = 0.4;
+		  //double r = std::sqrt(std::pow(p[0],2)+std::pow(p[1],2));
+		  //double angle = std::atan(p[1]/p[0]);
+		  //double xx = r*std::cos(angle);
+		  //double yy = r*std::sin(angle);
+
+		  return 0.5*(1-std::tanh((std::pow(p[0]-r0,2)+std::pow(p[1],2))/std::pow(a,2)-1));
+	  }
+
+}
+
+template <int dim>
+  class BoundaryValues:  public Function<dim>
+  {
+  public:
+    BoundaryValues () {};
+    virtual void value_list (const std::vector<Point<dim> > &points,
+                             std::vector<double> &values,
+                             const unsigned int component=0) const;
+  };
+
+  template <int dim>
+  void BoundaryValues<dim>::value_list(const std::vector<Point<dim> > &points,
+                                       std::vector<double> &values,
+                                       const unsigned int) const
+  {
+    Assert(values.size()==points.size(),
+    ExcDimensionMismatch(values.size(),points.size()));
+
+
+    for (unsigned int i=0; i<values.size(); ++i)
+      {
+        //if (points[i](0)<0.5)
+          //values[i]=1.;
+        //else
+          values[i]=0.;
+      }
   }
 
-class CL
-{
-public:
-  CL();
-  void run();
-private:
-  void setup_system();
-  void assemble_system();
-  double get_source (const double time,
-                     const Point<1> &point) const;
-  Vector<double> evaluate_CL (const double time,
-                                     const Vector<double> &y) const;
 
-  void output_results (const unsigned int time_step,
-                      TimeStepping::runge_kutta_method method) const;
+  template<int dim>
+  class HyperbolicEquation
+  {
+  public:
+    HyperbolicEquation();
+    void run();
 
-  void set_initial_value();
-  void explicit_method (const TimeStepping::runge_kutta_method method,
-                        const unsigned int                     n_time_steps,
-                        const double                           initial_time,
-                        const double                           final_time);
+  private:
+    void setup_system();
+    void assemble_transport_matrix ();
+    void solve_time_step();
+    void output_results() const;
+    void refine_mesh (const unsigned int min_grid_level,
+                      const unsigned int max_grid_level);
 
-  double                       absorption_cross_section;
-  Triangulation<1>             triangulation;
-  FE_Q<1>                      fe;
-  DoFHandler<1>                dof_handler;
-  ConstraintMatrix             constraint_matrix;
-  SparsityPattern              sparsity_pattern;
-  SparseMatrix<double>         system_matrix;
-  SparseMatrix<double>         mass_matrix;
-  SparseDirectUMFPACK          inverse_mass_matrix;
-  Vector<double>               solution;
-  Vector<double>               old_solution;
-  double 					   b[4];
-  double 					   c[4];
-};
+    Triangulation<dim>   triangulation;
+    const MappingQ1<dim> mapping;
 
-  CL::CL()
+    FE_Q<dim>            fe;
+    DoFHandler<dim>      dof_handler;
+
+    ConstraintMatrix     constraints;
+
+    SparsityPattern      sparsity_pattern;
+    SparseMatrix<double> mass_matrix;
+    SparseMatrix<double> transport_matrix;
+    SparseMatrix<double> system_matrix;
+
+    Vector<double>       solution;
+    Vector<double>       old_solution;
+    Vector<double>       right_hand_side; //transport_rhs
+    Vector<double>       system_rhs;
+
+    typedef MeshWorker::DoFInfo<dim> DoFInfo;
+    typedef MeshWorker::IntegrationInfo<dim> CellInfo;
+
+    static void integrate_cell_term (DoFInfo &dinfo,
+                                         CellInfo &info);
+    static void integrate_boundary_term (DoFInfo &dinfo,
+                                             CellInfo &info);
+    static void integrate_face_term (DoFInfo &dinfo1,
+                                         DoFInfo &dinfo2,
+                                         CellInfo &info1,
+                                         CellInfo &info2);
+
+    double               time;
+    double               time_step;
+    unsigned int         timestep_number;
+
+    const double         theta;
+  };
+
+
+
+
+  /*template<int dim>
+  class RightHandSide : public Function<dim>
+  {
+  public:
+    RightHandSide ()
+      :
+      Function<dim>(),
+      period (0.2)
+    {}
+
+    virtual double value (const Point<dim> &p,
+                          const unsigned int component = 0) const;
+
+  private:
+    const double period;
+  };
+
+
+
+  template<int dim>
+  double RightHandSide<dim>::value (const Point<dim> &p,
+                                    const unsigned int component) const
+  {
+    Assert (component == 0, ExcInternalError());
+    Assert (dim == 2, ExcNotImplemented());
+
+    const double time = this->get_time();
+    const double point_within_period = (time/period - std::floor(time/period));
+
+    if ((point_within_period >= 0.0) && (point_within_period <= 0.2))
+      {
+        if ((p[0] > 0.5) && (p[1] > -0.5))
+          return 1;
+        else
+          return 0;
+      }
+    else if ((point_within_period >= 0.5) && (point_within_period <= 0.7))
+      {
+        if ((p[0] > -0.5) && (p[1] > 0.5))
+          return 1;
+        else
+          return 0;
+      }
+    else
+      return 0;
+  }*/
+
+
+
+ // template<int dim>
+  //class BoundaryValues : public Function<dim>
+  //{
+  //public:
+    //virtual double value (const Point<dim>  &p,
+      //                    const unsigned int component = 0) const;
+  //};
+
+
+
+  //template<int dim>
+  //double BoundaryValues<dim>::value (const Point<dim> &/*p*/,
+                                     //const unsigned int component) const
+  //{
+    //Assert(component == 0, ExcInternalError());
+    //return 0;
+  //}
+
+
+
+  template<int dim>
+  HyperbolicEquation<dim>::HyperbolicEquation ()
     :
-    absorption_cross_section(1.),
-    fe(2),
+    mapping (),
+    fe(1),
     dof_handler(triangulation),
-	b({1/6,1/3,1/3,1/6}),
-	c({0,1/2,1/2,1})
+    time_step(1. / 500),
+    theta(0)
   {}
 
 
-  void CL::setup_system ()
+
+  template<int dim>
+  void HyperbolicEquation<dim>::setup_system()
   {
     dof_handler.distribute_dofs(fe);
-    VectorTools::interpolate_boundary_values(dof_handler,0,ZeroFunction<1>(),constraint_matrix);
-    constraint_matrix.close();
+
+    std::cout << std::endl
+              << "==========================================="
+              << std::endl
+              << "Number of active cells: " << triangulation.n_active_cells()
+              << std::endl
+              << "Number of degrees of freedom: " << dof_handler.n_dofs()
+              << std::endl
+              << std::endl;
+
+    constraints.clear ();
+    DoFTools::make_hanging_node_constraints (dof_handler,
+                                             constraints);
+    constraints.close();
+
     DynamicSparsityPattern dsp(dof_handler.n_dofs());
-    DoFTools::make_sparsity_pattern(dof_handler,dsp,constraint_matrix);
+    DoFTools::make_sparsity_pattern(dof_handler,
+                                    dsp,
+                                    constraints,
+                                    /*keep_constrained_dofs = */ true);
     sparsity_pattern.copy_from(dsp);
-    system_matrix.reinit(sparsity_pattern);
+
     mass_matrix.reinit(sparsity_pattern);
+    transport_matrix.reinit(sparsity_pattern);
+    system_matrix.reinit(sparsity_pattern);
+
+    MatrixCreator::create_mass_matrix(dof_handler,
+                                      QGauss<dim>(fe.degree+1),
+                                      mass_matrix);
+    //MatrixCreator::create_laplace_matrix(dof_handler,
+                                    //     QGauss<dim>(fe.degree+1),
+                                      //   transport_matrix);
+
     solution.reinit(dof_handler.n_dofs());
+    old_solution.reinit(dof_handler.n_dofs());
+    right_hand_side.reinit(dof_handler.n_dofs());
+    system_rhs.reinit(dof_handler.n_dofs());
+  }
+
+  template <int dim>
+    void HyperbolicEquation<dim>::assemble_transport_matrix ()
+    {
+      MeshWorker::IntegrationInfoBox<dim> info_box;
+
+      const unsigned int n_gauss_points = dof_handler.get_fe().degree+1;
+      info_box.initialize_gauss_quadrature(n_gauss_points,
+                                           n_gauss_points,
+                                           n_gauss_points);
+
+      info_box.initialize_update_flags();
+      UpdateFlags update_flags = update_quadrature_points |
+                                 update_values            |
+                                 update_gradients;
+      info_box.add_update_flags(update_flags, true, true, true, true);
+
+      info_box.initialize(fe, mapping);
+
+      MeshWorker::DoFInfo<dim> dof_info(dof_handler);
+
+      MeshWorker::Assembler::SystemSimple<SparseMatrix<double>, Vector<double> >
+      assembler;
+      assembler.initialize(transport_matrix, right_hand_side);
+
+      MeshWorker::loop<dim, dim, MeshWorker::DoFInfo<dim>, MeshWorker::IntegrationInfoBox<dim> >
+      (dof_handler.begin_active(), dof_handler.end(),
+       dof_info, info_box,
+       &HyperbolicEquation<dim>::integrate_cell_term,
+       &HyperbolicEquation<dim>::integrate_boundary_term,
+       &HyperbolicEquation<dim>::integrate_face_term,
+       assembler);
+    }
+
+
+
+    template <int dim>
+    void HyperbolicEquation<dim>::integrate_cell_term (DoFInfo &dinfo,
+                                                     CellInfo &info)
+    {
+      const FEValuesBase<dim> &fe_v = info.fe_values();
+      FullMatrix<double> &local_matrix = dinfo.matrix(0).matrix;
+      const std::vector<double> &JxW = fe_v.get_JxW_values ();
+
+      for (unsigned int point=0; point<fe_v.n_quadrature_points; ++point)
+        {
+          Point<dim> beta;
+          beta(0) = -fe_v.quadrature_point(point)(1);
+          beta(1) = fe_v.quadrature_point(point)(0);
+          beta *= 2*numbers::PI;
+
+          for (unsigned int i=0; i<fe_v.dofs_per_cell; ++i)
+            for (unsigned int j=0; j<fe_v.dofs_per_cell; ++j)
+              local_matrix(i,j) -= beta*fe_v.shape_grad(i,point)*
+                                   fe_v.shape_value(j,point) *
+                                   JxW[point];
+        }
+    }
+
+    template <int dim>
+    void HyperbolicEquation<dim>::integrate_boundary_term (DoFInfo &dinfo,
+                                                         CellInfo &info)
+    {
+      const FEValuesBase<dim> &fe_v = info.fe_values();
+      FullMatrix<double> &local_matrix = dinfo.matrix(0).matrix;
+      Vector<double> &local_vector = dinfo.vector(0).block(0);
+
+      const std::vector<double> &JxW = fe_v.get_JxW_values ();
+      const std::vector<Tensor<1,dim> > &normals = fe_v.get_all_normal_vectors ();
+
+      std::vector<double> g(fe_v.n_quadrature_points);
+
+      static BoundaryValues<dim> boundary_function;
+      boundary_function.value_list (fe_v.get_quadrature_points(), g);
+
+      for (unsigned int point=0; point<fe_v.n_quadrature_points; ++point)
+        {
+          Point<dim> beta;
+          beta(0) = -fe_v.quadrature_point(point)(1);
+          beta(1) = fe_v.quadrature_point(point)(0);
+          beta *= 2*numbers::PI;
+
+          const double beta_n=beta * normals[point];
+          if (beta_n>0)
+            for (unsigned int i=0; i<fe_v.dofs_per_cell; ++i)
+              for (unsigned int j=0; j<fe_v.dofs_per_cell; ++j)
+                local_matrix(i,j) += beta_n *
+                                     fe_v.shape_value(j,point) *
+                                     fe_v.shape_value(i,point) *
+                                     JxW[point];
+          else
+            for (unsigned int i=0; i<fe_v.dofs_per_cell; ++i)
+              local_vector(i) -= beta_n *
+                                 g[point] *
+                                 fe_v.shape_value(i,point) *
+                                 JxW[point];
+        }
+    }
+
+    template <int dim>
+    void HyperbolicEquation<dim>::integrate_face_term (DoFInfo &dinfo1,
+                                                     DoFInfo &dinfo2,
+                                                     CellInfo &info1,
+                                                     CellInfo &info2)
+    {
+      const FEValuesBase<dim> &fe_v = info1.fe_values();
+
+      const FEValuesBase<dim> &fe_v_neighbor = info2.fe_values();
+
+      FullMatrix<double> &u1_v1_matrix = dinfo1.matrix(0,false).matrix;
+      FullMatrix<double> &u2_v1_matrix = dinfo1.matrix(0,true).matrix;
+      FullMatrix<double> &u1_v2_matrix = dinfo2.matrix(0,true).matrix;
+      FullMatrix<double> &u2_v2_matrix = dinfo2.matrix(0,false).matrix;
+
+
+      const std::vector<double> &JxW = fe_v.get_JxW_values ();
+      const std::vector<Tensor<1,dim> > &normals = fe_v.get_all_normal_vectors ();
+
+      for (unsigned int point=0; point<fe_v.n_quadrature_points; ++point)
+        {
+          Point<dim> beta;
+          beta(0) = -fe_v.quadrature_point(point)(1);
+          beta(1) = fe_v.quadrature_point(point)(0);
+          beta *= 2*numbers::PI;
+
+          const double beta_n=beta * normals[point];
+          if (beta_n>0)
+            {
+              for (unsigned int i=0; i<fe_v.dofs_per_cell; ++i)
+                for (unsigned int j=0; j<fe_v.dofs_per_cell; ++j)
+                  u1_v1_matrix(i,j) += beta_n *
+                                       fe_v.shape_value(j,point) *
+                                       fe_v.shape_value(i,point) *
+                                       JxW[point];
+
+              for (unsigned int k=0; k<fe_v_neighbor.dofs_per_cell; ++k)
+                for (unsigned int j=0; j<fe_v.dofs_per_cell; ++j)
+                  u1_v2_matrix(k,j) -= beta_n *
+                                       fe_v.shape_value(j,point) *
+                                       fe_v_neighbor.shape_value(k,point) *
+                                       JxW[point];
+            }
+          else
+            {
+              for (unsigned int i=0; i<fe_v.dofs_per_cell; ++i)
+                for (unsigned int l=0; l<fe_v_neighbor.dofs_per_cell; ++l)
+                  u2_v1_matrix(i,l) += beta_n *
+                                       fe_v_neighbor.shape_value(l,point) *
+                                       fe_v.shape_value(i,point) *
+                                       JxW[point];
+
+              for (unsigned int k=0; k<fe_v_neighbor.dofs_per_cell; ++k)
+                for (unsigned int l=0; l<fe_v_neighbor.dofs_per_cell; ++l)
+                  u2_v2_matrix(k,l) -= beta_n *
+                                       fe_v_neighbor.shape_value(l,point) *
+                                       fe_v_neighbor.shape_value(k,point) *
+                                       JxW[point];
+            }
+        }
+    }
+
+
+
+  template<int dim>
+  void HyperbolicEquation<dim>::solve_time_step()
+  {
+
+	  //SolverControl           solver_control (1000, 1e-12);
+	    //  SolverRichardson<>      solver (solver_control);
+
+	      //PreconditionBlockSSOR<SparseMatrix<double> > preconditioner;
+
+	      //preconditioner.initialize(system_matrix, fe.dofs_per_cell);
+
+	      //solver.solve (system_matrix, solution, system_rhs,
+	                    //preconditioner);
+
+    SolverControl solver_control(1000, 1e-8 * system_rhs.l2_norm());
+    SolverCG<> cg(solver_control);
+
+    PreconditionSSOR<> preconditioner;
+    preconditioner.initialize(system_matrix, 1.0);
+
+    cg.solve(system_matrix, solution, system_rhs,
+             preconditioner);
+
+    constraints.distribute(solution);
+
+    std::cout << "     " << solver_control.last_step()
+            << " CG iterations." << std::endl;
   }
 
 
-  void CL::assemble_system ()
+
+  template<int dim>
+  void HyperbolicEquation<dim>::output_results() const
   {
-    system_matrix = 0.;
-    mass_matrix = 0.;
-    const QGauss<1> quadrature_formula(3);
-    FEValues<1> fe_values(fe, quadrature_formula,
-                          update_values | update_gradients | update_JxW_values);
-    const unsigned int dofs_per_cell = fe.dofs_per_cell;
-    const unsigned int n_q_points    = quadrature_formula.size();
-    FullMatrix<double> cell_matrix (dofs_per_cell, dofs_per_cell);
-    FullMatrix<double> cell_mass_matrix (dofs_per_cell, dofs_per_cell);
-    std::vector<types::global_dof_index> local_dof_indices (dofs_per_cell);
-    DoFHandler<1>::active_cell_iterator
-    cell = dof_handler.begin_active(),
-    endc = dof_handler.end();
-    for (; cell!=endc; ++cell)
+	  if(timestep_number%10==0)
+	    {
+		  DataOut<dim> data_out;
+
+		      data_out.attach_dof_handler(dof_handler);
+		      data_out.add_data_vector(solution, "U");
+
+		      data_out.build_patches();
+
+		      const std::string filename = "solution-"
+		                                   + Utilities::int_to_string(timestep_number, 3) +
+		                                   ".vtk";
+		      std::ofstream output(filename.c_str());
+		      data_out.write_vtk(output);
+	  }
+
+  }
+
+
+  template <int dim>
+  void HyperbolicEquation<dim>::refine_mesh (const unsigned int min_grid_level,
+                                       const unsigned int max_grid_level)
+  {
+    Vector<float> estimated_error_per_cell (triangulation.n_active_cells());
+
+    KellyErrorEstimator<dim>::estimate (dof_handler,
+                                        QGauss<dim-1>(fe.degree+1),
+                                        typename FunctionMap<dim>::type(),
+                                        solution,
+                                        estimated_error_per_cell);
+
+    GridRefinement::refine_and_coarsen_fixed_fraction (triangulation,
+                                                       estimated_error_per_cell,
+                                                       0.6, 0.4);
+
+    if (triangulation.n_levels() > max_grid_level)
+      for (typename Triangulation<dim>::active_cell_iterator
+           cell = triangulation.begin_active(max_grid_level);
+           cell != triangulation.end(); ++cell)
+        cell->clear_refine_flag ();
+    for (typename Triangulation<dim>::active_cell_iterator
+         cell = triangulation.begin_active(min_grid_level);
+         cell != triangulation.end_active(min_grid_level); ++cell)
+      cell->clear_coarsen_flag ();
+
+    SolutionTransfer<dim> solution_trans(dof_handler);
+
+    Vector<double> previous_solution;
+    previous_solution = solution;
+    triangulation.prepare_coarsening_and_refinement();
+    solution_trans.prepare_for_coarsening_and_refinement(previous_solution);
+
+    triangulation.execute_coarsening_and_refinement ();
+    setup_system ();
+    assemble_transport_matrix();
+
+    solution_trans.interpolate(previous_solution, solution);
+    constraints.distribute (solution);
+  }
+
+
+
+  template<int dim>
+  void HyperbolicEquation<dim>::run()
+  {
+    const unsigned int initial_global_refinement = 2;
+    const unsigned int n_adaptive_pre_refinement_steps = 4;
+
+    if(dim==1)
+    	GridGenerator::hyper_cube (triangulation);
+    else
+    	GridGenerator::hyper_ball (triangulation);
+
+    triangulation.refine_global (initial_global_refinement);
+
+    setup_system();
+    assemble_transport_matrix();
+
+    unsigned int pre_refinement_step = 0;
+
+    Vector<double> tmp;
+    //Vector<double> forcing_terms;
+
+    start_time_iteration:
+
+    tmp.reinit (solution.size());
+    //forcing_terms.reinit (solution.size());
+
+
+    VectorTools::interpolate(dof_handler,
+                             InitialValue<dim>(),
+                             old_solution);
+    solution = old_solution;
+
+    timestep_number = 0;
+    time            = 0;
+
+    output_results();
+
+    while (time <= 1)
       {
-        cell_matrix = 0.;
-        cell_mass_matrix = 0.;
-        fe_values.reinit (cell);
-        for (unsigned int q_point=0; q_point<n_q_points; ++q_point)
-          for (unsigned int i=0; i<dofs_per_cell; ++i)
-            for (unsigned int j=0; j<dofs_per_cell; ++j)
-              {
-                cell_matrix(i,j) += ((- absorption_cross_section *
-                                      fe_values.shape_value(i,q_point) *
-                                      fe_values.shape_value(j,q_point)) *
-                                     fe_values.JxW(q_point));
-                cell_mass_matrix(i,j) += fe_values.shape_value(i,q_point) *
-                                         fe_values.shape_value(j,q_point) *
-                                         fe_values.JxW(q_point);
-              }
-        cell->get_dof_indices(local_dof_indices);
-        constraint_matrix.distribute_local_to_global(cell_matrix,local_dof_indices,system_matrix);
-        constraint_matrix.distribute_local_to_global(cell_mass_matrix,local_dof_indices,mass_matrix);
-      }
-    inverse_mass_matrix.initialize(mass_matrix);
-  }
+        time += time_step;
+        ++timestep_number;
 
-  double CL::get_source (const double time,
-                                const Point<1> &point) const
-  {
-    return 0.0;
-  }
+        std::cout << "Time step " << timestep_number << " at t=" << time
+                  << std::endl;
 
-  Vector<double> CL::evaluate_CL (const double time,
-                                                const Vector<double> &y) const
-  {
-    Vector<double> tmp(dof_handler.n_dofs());
-    tmp = 0.;
-    system_matrix.vmult(tmp,y);
-    const QGauss<1> quadrature_formula(3);
-    FEValues<1> fe_values(fe,
-                          quadrature_formula,
-                          update_values | update_quadrature_points | update_JxW_values);
-    const unsigned int dofs_per_cell = fe.dofs_per_cell;
-    const unsigned int n_q_points    = quadrature_formula.size();
-    Vector<double>  cell_source(dofs_per_cell);
-    std::vector<types::global_dof_index> local_dof_indices (dofs_per_cell);
-    DoFHandler<1>::active_cell_iterator
-    cell = dof_handler.begin_active(),
-    endc = dof_handler.end();
-    for (; cell!=endc; ++cell)
-      {
-        cell_source = 0.;
-        fe_values.reinit (cell);
-        for (unsigned int q_point=0; q_point<n_q_points; ++q_point)
+        mass_matrix.vmult(system_rhs, old_solution);
+
+        transport_matrix.vmult(tmp, old_solution);
+        system_rhs.add(-(1 - theta) * time_step, tmp);
+
+        //RIGHT HAND SIDE NEEDS TO BE ADDED WHEN g!=0 (Inflow BC)
+
+        //RightHandSide<dim> rhs_function;
+        //rhs_function.set_time(time);
+        //VectorTools::create_right_hand_side(dof_handler,
+          //                                  QGauss<dim>(fe.degree+1),
+            //                                rhs_function,
+              //                              tmp);
+        //forcing_terms = tmp;
+        //forcing_terms *= time_step * theta;
+
+        //rhs_function.set_time(time - time_step);
+        //VectorTools::create_right_hand_side(dof_handler,
+          //                                  QGauss<dim>(fe.degree+1),
+            //                                rhs_function,
+              //                              tmp);
+
+        //forcing_terms.add(time_step * (1 - theta), tmp);
+
+        //system_rhs += forcing_terms;
+
+        system_matrix.copy_from(mass_matrix);
+        system_matrix.add(theta * time_step, transport_matrix);
+
+        constraints.condense (system_matrix, system_rhs);
+
+        /*{
+          //?
+          BoundaryValues<dim> boundary_values_function;
+          boundary_values_function.set_time(time);
+
+          std::map<types::global_dof_index, double> boundary_values;
+          VectorTools::interpolate_boundary_values(dof_handler,
+                                                   0,
+                                                   boundary_values_function,
+                                                   boundary_values);
+
+          MatrixTools::apply_boundary_values(boundary_values,
+                                             system_matrix,
+                                             solution,
+                                             system_rhs);
+        }*/
+
+        solve_time_step();
+
+        output_results();
+
+        if ((timestep_number == 1) &&
+            (pre_refinement_step < n_adaptive_pre_refinement_steps))
           {
-            const double source = get_source(time,
-                                             fe_values.quadrature_point(q_point));
-            for (unsigned int i=0; i<dofs_per_cell; ++i)
-              cell_source(i) += source *
-                                fe_values.shape_value(i,q_point) *
-                                fe_values.JxW(q_point);
+            refine_mesh (initial_global_refinement,
+                         initial_global_refinement + n_adaptive_pre_refinement_steps);
+            ++pre_refinement_step;
+
+            tmp.reinit (solution.size());
+            //forcing_terms.reinit (solution.size());
+
+            std::cout << std::endl;
+
+            goto start_time_iteration;
           }
-        cell->get_dof_indices(local_dof_indices);
-        constraint_matrix.distribute_local_to_global(cell_source,
-                                                     local_dof_indices,
-                                                     tmp);
-      }
-    Vector<double> value(dof_handler.n_dofs());
-    inverse_mass_matrix.vmult(value,tmp);
-    return value;
-  }
+        else if ((timestep_number > 0) && (timestep_number % 10 == 0))
+          {
+            refine_mesh (initial_global_refinement,
+                         initial_global_refinement + n_adaptive_pre_refinement_steps);
+            tmp.reinit (solution.size());
+            //
+            //forcing_terms.reinit (solution.size());
+          }
 
-  void CL::output_results (const unsigned int time_step,
-                                  TimeStepping::runge_kutta_method method) const
-  {
-    std::string method_name;
-
-    method_name = "rk4";
-
-    DataOut<1> data_out;
-    data_out.attach_dof_handler(dof_handler);
-    data_out.add_data_vector(solution, "solution");
-    data_out.build_patches();
-    const std::string filename = "solution-" + method_name + "-" +
-                                 Utilities::int_to_string (time_step, 3) +
-                                 ".vtu";
-    std::ofstream output(filename.c_str());
-    data_out.write_vtu(output);
-  }
-
-  void CL::set_initial_value()
-  {
-	  VectorTools::interpolate(dof_handler,
-	                               InitialValue(),
-	                               old_solution);
-
-  }
-
-  void CL::explicit_method (  const TimeStepping::runge_kutta_method method,
-                                   const unsigned int                     n_time_steps,
-                                   const double                           initial_time,
-                                   const double                           final_time)
-  {
-    const double time_step = (final_time-initial_time)/static_cast<double> (n_time_steps);
-    double time = initial_time;
-    solution = 0.;
-    Vector<double> kj;
-    output_results(0,method);
-    for (unsigned int i=0; i<n_time_steps; ++i)
-      {
-    	solution+=old_solution;
-    	for (unsigned int j=1; j<=4; j++)
-    		{
-    			kj=this->evaluate_CL(time+i*time_step + c[j]*time_step,old_solution);
-    			kj*=time_step*b[j];
-    			solution+=kj;//.equ(time_step*b[j],kj);//time_step*b[j]*kj;
-    		}
-        if ((i+1)%10==0)
-          output_results(i+1,method);
         old_solution = solution;
       }
   }
 
-  void CL::run ()
-  {
-    GridGenerator::hyper_cube(triangulation);
-    triangulation.refine_global(4);
-    //Triangulation<1>::active_cell_iterator
-    //cell = triangulation.begin_active(),
-    //endc = triangulation.end();
-    //for (; cell!=endc; ++cell)
-      //for (unsigned int f=0; f<GeometryInfo<2>::faces_per_cell; ++f)
-        //if (cell->face(f)->at_boundary())
-          //{
-            //if ((cell->face(f)->center()[0]==0.) || (cell->face(f)->center()[0]==5.))
-              //cell->face(f)->set_boundary_id(1);
-            //else
-              //cell->face(f)->set_boundary_id(0);
-          //}
 
-    setup_system();
-    assemble_system();
-    set_initial_value();
-    unsigned int       n_steps      = 0;
-    const unsigned int n_time_steps = 100;
-    const double       initial_time = 0.;
-    const double       final_time   = 100;
-
-    explicit_method (TimeStepping::RK_CLASSIC_FOURTH_ORDER,
-                     n_time_steps,
-                     initial_time,
-                     final_time);
-    std::cout << "Fourth order Runge-Kutta: error=" << solution.l2_norm() << std::endl;
-    std::cout << std::endl;
-  }
-
-
-int main ()
+int main()
 {
   try
     {
-      CL cons_law;
-      cons_law.run();
+      using namespace dealii;
+
+      HyperbolicEquation<2> hyperbolic_equation;
+      hyperbolic_equation.run();
+
     }
   catch (std::exception &exc)
     {
       std::cerr << std::endl << std::endl
                 << "----------------------------------------------------"
                 << std::endl;
-      std::cerr << "Exception on processing: " << std::endl
-                << exc.what() << std::endl
-                << "Aborting!" << std::endl
+      std::cerr << "Exception on processing: " << std::endl << exc.what()
+                << std::endl << "Aborting!" << std::endl
                 << "----------------------------------------------------"
                 << std::endl;
+
       return 1;
     }
   catch (...)
@@ -311,12 +723,14 @@ int main ()
       std::cerr << std::endl << std::endl
                 << "----------------------------------------------------"
                 << std::endl;
-      std::cerr << "Unknown exception!" << std::endl
-                << "Aborting!" << std::endl
+      std::cerr << "Unknown exception!" << std::endl << "Aborting!"
+                << std::endl
                 << "----------------------------------------------------"
                 << std::endl;
       return 1;
-    };
+    }
+
   return 0;
 }
+
 
