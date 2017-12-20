@@ -27,7 +27,7 @@
 #include <deal.II/lac/full_matrix.h>
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
 #include <deal.II/lac/sparse_matrix.h>
-#include <deal.II/lac/solver_cg.h>
+#include <deal.II/lac/solver_gmres.h>
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/constraint_matrix.h>
 #include <deal.II/lac/solver_richardson.h>
@@ -38,6 +38,7 @@
 #include <deal.II/grid/grid_out.h>
 #include <deal.II/grid/tria_accessor.h>
 #include <deal.II/grid/tria_iterator.h>
+#include <deal.II/grid/manifold_lib.h>
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_accessor.h>
 #include <deal.II/dofs/dof_tools.h>
@@ -149,8 +150,10 @@ template <int dim>
     void refine_mesh (const unsigned int min_grid_level,
                       const unsigned int max_grid_level);
 
-    Triangulation<dim>   triangulation;
-    const MappingQ1<dim> mapping;
+
+    SphericalManifold<dim> manifold;
+    Triangulation<dim>     triangulation;
+    const MappingQ1<dim>   mapping;
 
     FE_Q<dim>            fe;
     DoFHandler<dim>      dof_handler;
@@ -265,7 +268,7 @@ template <int dim>
     fe(1),
     dof_handler(triangulation),
     time_step(1. / 500),
-    theta(0)
+    theta(.5)
   {}
 
 
@@ -490,13 +493,13 @@ template <int dim>
 	                    //preconditioner);
 
     SolverControl solver_control(1000, 1e-8 * system_rhs.l2_norm());
-    SolverCG<> cg(solver_control);
+    SolverGMRES<> cg(solver_control);
 
-    PreconditionSSOR<> preconditioner;
-    preconditioner.initialize(system_matrix, 1.0);
+/*    PreconditionSSOR<> preconditioner;
+    preconditioner.initialize(system_matrix, 1.0);*/
 
     cg.solve(system_matrix, solution, system_rhs,
-             preconditioner);
+             PreconditionIdentity());
 
     constraints.distribute(solution);
 
@@ -574,13 +577,17 @@ template <int dim>
   template<int dim>
   void HyperbolicEquation<dim>::run()
   {
-    const unsigned int initial_global_refinement = 2;
-    const unsigned int n_adaptive_pre_refinement_steps = 4;
+    const unsigned int initial_global_refinement = 5;
+    const unsigned int n_adaptive_pre_refinement_steps = 0;
 
     if(dim==1)
     	GridGenerator::hyper_cube (triangulation);
     else
+    {
     	GridGenerator::hyper_ball (triangulation);
+        triangulation.set_all_manifold_ids_on_boundary(0);
+        triangulation.set_manifold (0, manifold);
+    }
 
     triangulation.refine_global (initial_global_refinement);
 
@@ -682,14 +689,14 @@ template <int dim>
 
             goto start_time_iteration;
           }
-        else if ((timestep_number > 0) && (timestep_number % 10 == 0))
+/*        else if ((timestep_number > 0) && (timestep_number % 10 == 0))
           {
             refine_mesh (initial_global_refinement,
                          initial_global_refinement + n_adaptive_pre_refinement_steps);
             tmp.reinit (solution.size());
             //
             //forcing_terms.reinit (solution.size());
-          }
+          }*/
 
         old_solution = solution;
       }
