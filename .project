@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <projectDescription>
-	<name>conservation-laws-Debug@conservation-laws</name>
+	<name>conservation-laws-Debug@Entropy</name>
 	<comment></comment>
 	<projects>
 	</projects>
@@ -47,7 +47,7 @@
 				</dictionary>
 				<dictionary>
 					<key>org.eclipse.cdt.make.core.buildLocation</key>
-					<value>/mnt/raid1/people/annamaria/Documents/eclipse-workspace/conservation-laws</value>
+					<value>/home/people/annamaria/Desktop/Entropy</value>
 				</dictionary>
 				<dictionary>
 					<key>org.eclipse.cdt.make.core.useDefaultBuildCmd</key>
@@ -83,7 +83,7 @@
 				</dictionary>
 				<dictionary>
 					<key>org.eclipse.cdt.make.core.build.location</key>
-					<value>/mnt/raid1/people/annamaria/Documents/eclipse-workspace/conservation-laws</value>
+					<value>/home/people/annamaria/Desktop/Entropy</value>
 				</dictionary>
 				<dictionary>
 					<key>org.eclipse.cdt.make.core.autoBuildTarget</key>
@@ -136,7 +136,7 @@
 		<link>
 			<name>[Targets]/[exe] conservation-laws/Source Files/conservation-laws.cc</name>
 			<type>1</type>
-			<location>/mnt/raid1/people/annamaria/Documents/eclipse-workspace/conservation-laws/conservation-laws.cc</location>
+			<location>/home/people/annamaria/Desktop/Entropy/conservation-laws.cc</location>
 		</link>
 		<link>
 			<name>[Targets]/[exe] conservation-laws/Header Files</name>

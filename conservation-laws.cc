@@ -58,6 +58,8 @@
 #include <deal.II/meshworker/simple.h>
 #include <deal.II/meshworker/loop.h>
 
+#include <deal.II/base/convergence_table.h>
+
 #include <fstream>
 #include <iostream>
 
@@ -135,20 +137,28 @@ template <int dim>
   }
 
 
+
   template<int dim>
   class HyperbolicEquation
   {
   public:
     HyperbolicEquation();
-    void run();
+    ~HyperbolicEquation();
+    void run(const unsigned int cycle);
+    void cycle_refine();
+    void write_table();
+
 
   private:
     void setup_system();
     void assemble_transport_matrix ();
     void solve_time_step();
-    void output_results() const;
+    void output_results(const unsigned int cycle) const;
     void refine_mesh (const unsigned int min_grid_level,
                       const unsigned int max_grid_level);
+    //void refine_grid ();
+    void process_solution (const unsigned int cycle);
+
 
 
     SphericalManifold<dim> manifold;
@@ -165,6 +175,7 @@ template <int dim>
     SparseMatrix<double> transport_matrix;
     SparseMatrix<double> system_matrix;
 
+    //Vector<double>       exact_solution;
     Vector<double>       solution;
     Vector<double>       old_solution;
     Vector<double>       right_hand_side; //transport_rhs
@@ -187,6 +198,7 @@ template <int dim>
     unsigned int         timestep_number;
 
     const double         theta;
+    ConvergenceTable     convergence_table;
   };
 
 
@@ -270,6 +282,12 @@ template <int dim>
     time_step(1. / 500),
     theta(.5)
   {}
+
+  template<int dim>
+  HyperbolicEquation<dim>::~HyperbolicEquation ()
+  {
+	  dof_handler.clear();
+  }
 
 
 
@@ -502,17 +520,17 @@ template <int dim>
              PreconditionIdentity());
 
     constraints.distribute(solution);
-
-    std::cout << "     " << solver_control.last_step()
+    if(timestep_number%10==0)
+        std::cout << "     " << solver_control.last_step()
             << " CG iterations." << std::endl;
   }
 
 
 
   template<int dim>
-  void HyperbolicEquation<dim>::output_results() const
+  void HyperbolicEquation<dim>::output_results(const unsigned int cycle) const
   {
-	  if(timestep_number%10==0)
+	  if(timestep_number%50==0)
 	    {
 		  DataOut<dim> data_out;
 
@@ -521,9 +539,9 @@ template <int dim>
 
 		      data_out.build_patches();
 
-		      const std::string filename = "solution-"
-		                                   + Utilities::int_to_string(timestep_number, 3) +
-		                                   ".vtk";
+		      const std::string filename = "solution-"  + Utilities::int_to_string(cycle, 1) + "-"
+		                                   + Utilities::int_to_string(timestep_number, 3)
+		                                   + ".vtk";
 		      std::ofstream output(filename.c_str());
 		      data_out.write_vtk(output);
 	  }
@@ -575,11 +593,13 @@ template <int dim>
 
 
   template<int dim>
-  void HyperbolicEquation<dim>::run()
+  void HyperbolicEquation<dim>::run(const unsigned int cycle)
   {
     const unsigned int initial_global_refinement = 5;
-    const unsigned int n_adaptive_pre_refinement_steps = 0;
+    //const unsigned int n_adaptive_pre_refinement_steps = 0;
 
+    if(cycle==0)
+    {
     if(dim==1)
     	GridGenerator::hyper_cube (triangulation);
     else
@@ -590,16 +610,17 @@ template <int dim>
     }
 
     triangulation.refine_global (initial_global_refinement);
+    }
 
     setup_system();
     assemble_transport_matrix();
 
-    unsigned int pre_refinement_step = 0;
+    //unsigned int pre_refinement_step = 0;
 
     Vector<double> tmp;
     //Vector<double> forcing_terms;
 
-    start_time_iteration:
+    //start_time_iteration:
 
     tmp.reinit (solution.size());
     //forcing_terms.reinit (solution.size());
@@ -613,14 +634,14 @@ template <int dim>
     timestep_number = 0;
     time            = 0;
 
-    output_results();
+    output_results(cycle);
 
     while (time <= 1)
       {
         time += time_step;
         ++timestep_number;
-
-        std::cout << "Time step " << timestep_number << " at t=" << time
+        if(timestep_number%10==0)
+            std::cout << "Time step " << timestep_number << " at t=" << time
                   << std::endl;
 
         mass_matrix.vmult(system_rhs, old_solution);
@@ -673,9 +694,9 @@ template <int dim>
 
         solve_time_step();
 
-        output_results();
+        output_results(cycle);
 
-        if ((timestep_number == 1) &&
+        /*if ((timestep_number == 1) &&
             (pre_refinement_step < n_adaptive_pre_refinement_steps))
           {
             refine_mesh (initial_global_refinement,
@@ -688,7 +709,7 @@ template <int dim>
             std::cout << std::endl;
 
             goto start_time_iteration;
-          }
+          }*/
 /*        else if ((timestep_number > 0) && (timestep_number % 10 == 0))
           {
             refine_mesh (initial_global_refinement,
@@ -700,7 +721,89 @@ template <int dim>
 
         old_solution = solution;
       }
+
+      process_solution(cycle);
+
   }
+
+
+template <int dim>
+void HyperbolicEquation<dim>::process_solution (const unsigned int cycle)
+{
+Vector<float> difference_per_cell (triangulation.n_active_cells());
+VectorTools::integrate_difference (dof_handler,
+                                 solution,
+                                 InitialValue<dim>(),
+                                 difference_per_cell,
+                                 QGauss<dim>(3),
+                                 VectorTools::L1_norm);
+const double L1_error = difference_per_cell.l1_norm();
+VectorTools::integrate_difference (dof_handler,
+                                 solution,
+                                 InitialValue<dim>(),
+                                 difference_per_cell,
+                                 QGauss<dim>(3),
+                                 VectorTools::L2_norm);
+const double L2_error = difference_per_cell.l2_norm();
+
+const unsigned int n_active_cells=triangulation.n_active_cells();
+const unsigned int n_dofs=dof_handler.n_dofs();
+std::cout << "Cycle " << cycle << ':'
+        << std::endl
+        << "   Number of active cells:       "
+        << n_active_cells
+        << std::endl
+        << "   Number of degrees of freedom: "
+        << n_dofs
+        << std::endl;
+convergence_table.add_value("cycle", cycle);
+convergence_table.add_value("cells", n_active_cells);
+convergence_table.add_value("dofs", n_dofs);
+convergence_table.add_value("L1", L1_error);
+convergence_table.add_value("L2", L2_error);
+
+}
+
+template <int dim>
+void HyperbolicEquation<dim>::cycle_refine()
+{
+	triangulation.refine_global();
+}
+
+template <int dim>
+void HyperbolicEquation<dim>::write_table()
+{
+    convergence_table.set_precision("L1", 3);
+    convergence_table.set_precision("L2", 3);
+    convergence_table.set_scientific("L1", true);
+    convergence_table.set_scientific("L2", true);
+    convergence_table.set_tex_caption("cells", "\\# cells");
+    convergence_table.set_tex_caption("dofs", "\\# dofs");
+    convergence_table.set_tex_caption("L1", "@f$L^1@f$-error");
+    convergence_table.set_tex_caption("L2", "@f$L^2@f$-error");
+    convergence_table.set_tex_format("cells", "r");
+    convergence_table.set_tex_format("dofs", "r");
+    std::cout << std::endl;
+    convergence_table.write_text(std::cout);
+
+   std::string error_filename = "error.tex";
+   std::ofstream error_table_file(error_filename.c_str());
+   convergence_table.write_tex(error_table_file);
+
+	convergence_table
+	.evaluate_convergence_rates("L1", ConvergenceTable::reduction_rate);
+	convergence_table
+	.evaluate_convergence_rates("L1", ConvergenceTable::reduction_rate_log2);
+	convergence_table
+	.evaluate_convergence_rates("L2", ConvergenceTable::reduction_rate);
+	convergence_table
+	.evaluate_convergence_rates("L2", ConvergenceTable::reduction_rate_log2);
+	std::cout << std::endl;
+	convergence_table.write_text(std::cout);
+	std::string conv_filename = "convergence.tex";
+	std::ofstream table_file(conv_filename.c_str());
+	convergence_table.write_tex(table_file);
+}
 
 
 int main()
@@ -710,7 +813,12 @@ int main()
       using namespace dealii;
 
       HyperbolicEquation<2> hyperbolic_equation;
-      hyperbolic_equation.run();
+      for(unsigned int cycle=0;cycle<=3;cycle++)
+      {
+    	  hyperbolic_equation.run(cycle);
+    	  hyperbolic_equation.cycle_refine();
+      }
+      hyperbolic_equation.write_table();
 
     }
   catch (std::exception &exc)
