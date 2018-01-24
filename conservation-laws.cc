@@ -44,7 +44,7 @@
 #include <deal.II/dofs/dof_tools.h>
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_values.h>
-#include <deal.II/fe/mapping_q1.h>
+#include <deal.II/fe/mapping_q_generic.h>
 #include <deal.II/fe/fe_dgq.h>
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/vector_tools.h>
@@ -96,14 +96,15 @@
 	  else
 	  {
 
-		  double a = 0.3;
+		  /*double a = 0.3;
 		  double r0 = 0.4;
 		  //double r = std::sqrt(std::pow(p[0],2)+std::pow(p[1],2));
 		  //double angle = std::atan(p[1]/p[0]);
 		  //double xx = r*std::cos(angle);
 		  //double yy = r*std::sin(angle);
 
-		  return 0.5*(1-std::tanh((std::pow(p[0]-r0,2)+std::pow(p[1],2))/std::pow(a,2)-1));
+		  return 0.5*(1-std::tanh((std::pow(p[0]-r0,2)+std::pow(p[1],2))/std::pow(a,2)-1));*/
+          return (p[0]*p[0]+p[1]*p[1]);
 	  }
 
 }
@@ -163,10 +164,10 @@ template <int dim>
 
     SphericalManifold<dim> manifold;
     Triangulation<dim>     triangulation;
-    const MappingQ1<dim>   mapping;
+    FE_Q<dim>              fe;
 
-    FE_Q<dim>            fe;
-    DoFHandler<dim>      dof_handler;
+    const MappingQGeneric<dim>   mapping;
+    DoFHandler<dim>              dof_handler;
 
     ConstraintMatrix     constraints;
 
@@ -276,8 +277,8 @@ template <int dim>
   template<int dim>
   HyperbolicEquation<dim>::HyperbolicEquation ()
     :
-    mapping (),
     fe(1),
+    mapping (fe.degree),
     dof_handler(triangulation),
     time_step(1. / 500),
     theta(.5)
@@ -405,7 +406,7 @@ template <int dim>
 
       std::vector<double> g(fe_v.n_quadrature_points);
 
-      static BoundaryValues<dim> boundary_function;
+      static InitialValue<dim> boundary_function;
       boundary_function.value_list (fe_v.get_quadrature_points(), g);
 
       for (unsigned int point=0; point<fe_v.n_quadrature_points; ++point)
@@ -556,7 +557,7 @@ template <int dim>
     Vector<float> estimated_error_per_cell (triangulation.n_active_cells());
 
     KellyErrorEstimator<dim>::estimate (dof_handler,
-                                        QGauss<dim-1>(fe.degree+1),
+                                        QGauss<dim-1>(fe.degree+2),
                                         typename FunctionMap<dim>::type(),
                                         solution,
                                         estimated_error_per_cell);
@@ -595,7 +596,7 @@ template <int dim>
   template<int dim>
   void HyperbolicEquation<dim>::run(const unsigned int cycle)
   {
-    const unsigned int initial_global_refinement = 5;
+    const unsigned int initial_global_refinement = 0;
     //const unsigned int n_adaptive_pre_refinement_steps = 0;
 
     if(cycle==0)
@@ -626,7 +627,10 @@ template <int dim>
     //forcing_terms.reinit (solution.size());
 
 
-    VectorTools::interpolate(dof_handler,
+    VectorTools::project(mapping,
+            dof_handler,
+            ConstraintMatrix(),
+             QGauss<dim>(fe.degree+1),
                              InitialValue<dim>(),
                              old_solution);
     solution = old_solution;
@@ -636,7 +640,7 @@ template <int dim>
 
     output_results(cycle);
 
-    while (time <= 1)
+    while (time < 1.)
       {
         time += time_step;
         ++timestep_number;
@@ -731,18 +735,20 @@ template <int dim>
 void HyperbolicEquation<dim>::process_solution (const unsigned int cycle)
 {
 Vector<float> difference_per_cell (triangulation.n_active_cells());
-VectorTools::integrate_difference (dof_handler,
+VectorTools::integrate_difference (mapping,
+                                  dof_handler,
                                  solution,
                                  InitialValue<dim>(),
                                  difference_per_cell,
-                                 QGauss<dim>(3),
+                                 QGauss<dim>(fe.degree+2),
                                  VectorTools::L1_norm);
 const double L1_error = difference_per_cell.l1_norm();
-VectorTools::integrate_difference (dof_handler,
+VectorTools::integrate_difference (mapping,
+                                  dof_handler,
                                  solution,
                                  InitialValue<dim>(),
                                  difference_per_cell,
-                                 QGauss<dim>(3),
+                                 QGauss<dim>(fe.degree+2),
                                  VectorTools::L2_norm);
 const double L2_error = difference_per_cell.l2_norm();
 
@@ -813,7 +819,7 @@ int main()
       using namespace dealii;
 
       HyperbolicEquation<2> hyperbolic_equation;
-      for(unsigned int cycle=0;cycle<=3;cycle++)
+      for(unsigned int cycle=0;cycle<=5;cycle++)
       {
     	  hyperbolic_equation.run(cycle);
     	  hyperbolic_equation.cycle_refine();
