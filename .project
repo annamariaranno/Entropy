@@ -47,7 +47,7 @@
 				</dictionary>
 				<dictionary>
 					<key>org.eclipse.cdt.make.core.buildLocation</key>
-					<value>/home/people/annamaria/Desktop/Entropy</value>
+					<value>/home/people/annamaria/Desktop/Entropy_old/Entropy</value>
 				</dictionary>
 				<dictionary>
 					<key>org.eclipse.cdt.make.core.useDefaultBuildCmd</key>
@@ -83,7 +83,7 @@
 				</dictionary>
 				<dictionary>
 					<key>org.eclipse.cdt.make.core.build.location</key>
-					<value>/home/people/annamaria/Desktop/Entropy</value>
+					<value>/home/people/annamaria/Desktop/Entropy_old/Entropy</value>
 				</dictionary>
 				<dictionary>
 					<key>org.eclipse.cdt.make.core.autoBuildTarget</key>
@@ -136,7 +136,7 @@
 		<link>
 			<name>[Targets]/[exe] conservation-laws/Source Files/conservation-laws.cc</name>
 			<type>1</type>
-			<location>/home/people/annamaria/Desktop/Entropy/conservation-laws.cc</location>
+			<location>/home/people/annamaria/Desktop/Entropy_old/Entropy/conservation-laws.cc</location>
 		</link>
 		<link>
 			<name>[Targets]/[exe] conservation-laws/Header Files</name>

@@ -104,7 +104,7 @@
 		  //double yy = r*std::sin(angle);
 
 		  return 0.5*(1-std::tanh((std::pow(p[0]-r0,2)+std::pow(p[1],2))/std::pow(a,2)-1));*/
-          return (p[0]*p[0]+p[1]*p[1]);
+          return 1-(p[0]*p[0]+p[1]*p[1]);
 	  }
 
 }
@@ -297,14 +297,14 @@ template <int dim>
   {
     dof_handler.distribute_dofs(fe);
 
-    std::cout << std::endl
+    /*std::cout << std::endl
               << "==========================================="
               << std::endl
               << "Number of active cells: " << triangulation.n_active_cells()
               << std::endl
               << "Number of degrees of freedom: " << dof_handler.n_dofs()
               << std::endl
-              << std::endl;
+              << std::endl;*/
 
     constraints.clear ();
     DoFTools::make_hanging_node_constraints (dof_handler,
@@ -359,7 +359,8 @@ template <int dim>
       assembler;
       assembler.initialize(transport_matrix, right_hand_side);
 
-      MeshWorker::loop<dim, dim, MeshWorker::DoFInfo<dim>, MeshWorker::IntegrationInfoBox<dim> >
+      MeshWorker::loop<dim, dim, MeshWorker::DoFInfo<dim>,
+	  MeshWorker::IntegrationInfoBox<dim> >
       (dof_handler.begin_active(), dof_handler.end(),
        dof_info, info_box,
        &HyperbolicEquation<dim>::integrate_cell_term,
@@ -387,8 +388,8 @@ template <int dim>
 
           for (unsigned int i=0; i<fe_v.dofs_per_cell; ++i)
             for (unsigned int j=0; j<fe_v.dofs_per_cell; ++j)
-              local_matrix(i,j) -= beta*fe_v.shape_grad(i,point)*
-                                   fe_v.shape_value(j,point) *
+              local_matrix(i,j) += beta*fe_v.shape_grad(j,point)*
+                                   fe_v.shape_value(i,point) *
                                    JxW[point];
         }
     }
@@ -417,19 +418,20 @@ template <int dim>
           beta *= 2*numbers::PI;
 
           const double beta_n=beta * normals[point];
-          if (beta_n>0)
+          if (beta_n<0)
             for (unsigned int i=0; i<fe_v.dofs_per_cell; ++i)
+            {
+            	local_vector(i) -= beta_n *
+            	                   g[point] *
+            	                   fe_v.shape_value(i,point) *
+            	                   JxW[point];
+
               for (unsigned int j=0; j<fe_v.dofs_per_cell; ++j)
-                local_matrix(i,j) += beta_n *
+                local_matrix(i,j) -= beta_n *
                                      fe_v.shape_value(j,point) *
                                      fe_v.shape_value(i,point) *
                                      JxW[point];
-          else
-            for (unsigned int i=0; i<fe_v.dofs_per_cell; ++i)
-              local_vector(i) -= beta_n *
-                                 g[point] *
-                                 fe_v.shape_value(i,point) *
-                                 JxW[point];
+            }
         }
     }
 
@@ -464,33 +466,33 @@ template <int dim>
             {
               for (unsigned int i=0; i<fe_v.dofs_per_cell; ++i)
                 for (unsigned int j=0; j<fe_v.dofs_per_cell; ++j)
-                  u1_v1_matrix(i,j) += beta_n *
-                                       fe_v.shape_value(j,point) *
-                                       fe_v.shape_value(i,point) *
-                                       JxW[point];
+                  u1_v1_matrix(i,j) += 0;//beta_n *
+                                       //fe_v.shape_value(j,point) *
+                                       //fe_v.shape_value(i,point) *
+                                       //JxW[point];
 
               for (unsigned int k=0; k<fe_v_neighbor.dofs_per_cell; ++k)
                 for (unsigned int j=0; j<fe_v.dofs_per_cell; ++j)
-                  u1_v2_matrix(k,j) -= beta_n *
-                                       fe_v.shape_value(j,point) *
-                                       fe_v_neighbor.shape_value(k,point) *
-                                       JxW[point];
+                  u1_v2_matrix(k,j) -= 0;//beta_n *
+                                       //fe_v.shape_value(j,point) *
+                                       //fe_v_neighbor.shape_value(k,point) *
+                                       //JxW[point];
             }
           else
             {
               for (unsigned int i=0; i<fe_v.dofs_per_cell; ++i)
                 for (unsigned int l=0; l<fe_v_neighbor.dofs_per_cell; ++l)
-                  u2_v1_matrix(i,l) += beta_n *
-                                       fe_v_neighbor.shape_value(l,point) *
-                                       fe_v.shape_value(i,point) *
-                                       JxW[point];
+                  u2_v1_matrix(i,l) += 0;//beta_n *
+                                       //fe_v_neighbor.shape_value(l,point) *
+                                       //fe_v.shape_value(i,point) *
+                                       //JxW[point];
 
               for (unsigned int k=0; k<fe_v_neighbor.dofs_per_cell; ++k)
                 for (unsigned int l=0; l<fe_v_neighbor.dofs_per_cell; ++l)
-                  u2_v2_matrix(k,l) -= beta_n *
-                                       fe_v_neighbor.shape_value(l,point) *
-                                       fe_v_neighbor.shape_value(k,point) *
-                                       JxW[point];
+                  u2_v2_matrix(k,l) -= 0;//beta_n *
+                                       //fe_v_neighbor.shape_value(l,point) *
+                                       //fe_v_neighbor.shape_value(k,point) *
+                                       //JxW[point];
             }
         }
     }
@@ -512,18 +514,18 @@ template <int dim>
 	                    //preconditioner);
 
     SolverControl solver_control(1000, 1e-8 * system_rhs.l2_norm());
-    SolverGMRES<> cg(solver_control);
+    SolverGMRES<> gmres(solver_control);
 
 /*    PreconditionSSOR<> preconditioner;
     preconditioner.initialize(system_matrix, 1.0);*/
 
-    cg.solve(system_matrix, solution, system_rhs,
+    gmres.solve(system_matrix, solution, system_rhs,
              PreconditionIdentity());
 
     constraints.distribute(solution);
     if(timestep_number%10==0)
         std::cout << "     " << solver_control.last_step()
-            << " CG iterations." << std::endl;
+            << " GMRES iterations." << std::endl;
   }
 
 
@@ -629,10 +631,12 @@ template <int dim>
 
     VectorTools::project(mapping,
             dof_handler,
-            ConstraintMatrix(),
-             QGauss<dim>(fe.degree+1),
-                             InitialValue<dim>(),
-                             old_solution);
+            constraints,
+			//ConstraintMatrix(),
+            QGauss<dim>(fe.degree+1),
+            InitialValue<dim>(),
+            old_solution);
+
     solution = old_solution;
 
     timestep_number = 0;
@@ -640,7 +644,7 @@ template <int dim>
 
     output_results(cycle);
 
-    while (time < 1.)
+    while (time < 3./500)
       {
         time += time_step;
         ++timestep_number;
@@ -672,7 +676,7 @@ template <int dim>
 
         //forcing_terms.add(time_step * (1 - theta), tmp);
 
-        //system_rhs += forcing_terms;
+        system_rhs += right_hand_side; //transport_rhs is time independent
 
         system_matrix.copy_from(mass_matrix);
         system_matrix.add(theta * time_step, transport_matrix);
@@ -712,7 +716,7 @@ template <int dim>
 
             std::cout << std::endl;
 
-            goto start_time_iteration;
+          goto start_time_iteration;
           }*/
 /*        else if ((timestep_number > 0) && (timestep_number % 10 == 0))
           {
