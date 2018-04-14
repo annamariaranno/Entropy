@@ -100,6 +100,9 @@ AdvectionField<dim>::value_list (const std::vector<Point<dim> > &points,
   {
 	  Assert(component == 0, ExcInternalError());
 
+	  //can't call from here: time is useless as argument of the function call value
+	  //this->set_time(time);
+
 	  double t=this->get_time();
 
 	  if(dim==1)
@@ -122,7 +125,7 @@ AdvectionField<dim>::value_list (const std::vector<Point<dim> > &points,
 		  double angle = std::atan2(p[1],p[0]);
 		  double xx = r*std::cos(angle-2*numbers::PI*t);
 		  double yy = r*std::sin(angle-2*numbers::PI*t);
-		  double res = 0.5*(1-std::tanh((std::pow(xx-r0,2)+std::pow(yy,2))/std::pow(a,2)-1));
+		  double res = 0.5*(1-std::tanh((std::pow(xx-r0,2.)+std::pow(yy,2.))/std::pow(a,2.)-1));
 		  //std::cout << "Return value"<< res << std::endl;
 		  return 0.5*(1-std::tanh((std::pow(xx-r0,2.)+std::pow(yy,2.))/std::pow(a,2.)-1));
           //return (p[0]*(1-p[0])+p[1]*(1-p[1])); //working for small time_step
@@ -289,7 +292,7 @@ template<int dim>
     timestep_number(0),
     cycle(0),
 	cycles_number(0),
-	initial_global_refinement(1),
+	initial_global_refinement(5),
     theta(.5)
   {
 	cell_matrix.reinit (dofs_per_cell, dofs_per_cell);
@@ -413,17 +416,17 @@ template <int dim>
                 		{
                   			cell_rhs(i) -= (advection_field.value(fe_values.quadrature_point(q_point)) *
                                             fe_face_values.normal_vector(q_point) *
-                                            boundary_values.value(fe_values.quadrature_point(q_point))         *
+                                            boundary_values.value(fe_values.quadrature_point(q_point))*
                                             fe_face_values.shape_value(i,q_point) *
                                             fe_face_values.JxW(q_point));
                 		}
 
-              			std::cout<< "normal vector:  "<<
+              			/*std::cout<< "normal vector:  "<<
               			           fe_face_values.normal_vector(q_point)[0]
               			           <<std::endl;
               			std::cout<< "normal vector:  "<<
               					fe_face_values.normal_vector(q_point)[1]
-																	  <<std::endl;
+																	  <<std::endl;*/
 
             		}
             }
@@ -462,7 +465,7 @@ template <int dim>
     	system_rhs_matrix.copy_from(mass_matrix);
     	system_rhs_matrix.add(-(1-theta)*time_step, transport_matrix);
     	//Make sure old_solution is already initialized
-    	system_rhs_matrix.vmult(system_rhs, old_solution);
+    	//system_rhs_matrix.vmult(system_rhs, old_solution);
     }
     
 template <int dim>
@@ -624,10 +627,10 @@ template <int dim>
     			GridGenerator::hyper_cube (triangulation);
     		else
     		{
-    			/*GridGenerator::hyper_ball (triangulation);
+    			GridGenerator::hyper_ball (triangulation);
         		triangulation.set_all_manifold_ids_on_boundary(0);
-        		triangulation.set_manifold (0, manifold);*/
-    			GridGenerator::hyper_cube (triangulation);
+        		triangulation.set_manifold (0, manifold);
+    			//GridGenerator::hyper_cube (triangulation);
     		}
 
     		triangulation.refine_global (initial_global_refinement);
@@ -644,8 +647,18 @@ template <int dim>
             old_solution);
     	solution = old_solution;
     	//old_solution.print();
-    	output_results(cycle);
-            
+       	output_results(cycle);
+
+    	Vector<float> difference_per_cell (triangulation.n_active_cells());
+
+    	VectorTools::integrate_difference (mapping,
+    	        	                       dof_handler,
+    	        	                       solution,
+    	        	                       ExactSolution<dim>(1,time),
+    	        	                       difference_per_cell,
+    	        	                       QGauss<dim>(fe.degree+2),
+    	        	                       VectorTools::L2_norm);
+    	std::cout<< "Error:"<< difference_per_cell.l2_norm()<<std::endl;
     	assemble_system();
     	//transport_matrix.print(std::cout);
 
@@ -660,17 +673,30 @@ template <int dim>
             	std::cout << "Time step " << timestep_number << " at t=" << time
                   	<< std::endl;
 
+            system_rhs_matrix.vmult(system_rhs, old_solution);
          	assemble_rhs();
          	system_rhs.add(1.,time_dependent_rhs);
          	//time_dependent_rhs.print();
-         	time_dependent_rhs.reinit(dof_handler.n_dofs());
 
         	solve_time_step();
         	//solution.print();
 
+        	VectorTools::integrate_difference (mapping,
+        	                                  dof_handler,
+        	                                 solution,
+        	                                 ExactSolution<dim>(1,time),
+        	                                 difference_per_cell,
+        	                                 QGauss<dim>(fe.degree+2),
+        	                                 VectorTools::L2_norm);
+
+        	std::cout<< "Error:"<< difference_per_cell.l2_norm()<<std::endl;
+
         	output_results(cycle);
 
         	old_solution = solution;
+
+        	//clear time-dependent objects before next iteration:
+        	time_dependent_rhs.reinit(dof_handler.n_dofs());
       	}
 
       process_solution(cycle);
