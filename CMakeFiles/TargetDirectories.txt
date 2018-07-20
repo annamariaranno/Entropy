@@ -1,0 +1,8 @@
+/home/annamaria/Desktop/Entropy_old/Entropy/CMakeFiles/conservation-laws.dir
+/home/annamaria/Desktop/Entropy_old/Entropy/CMakeFiles/debug.dir
+/home/annamaria/Desktop/Entropy_old/Entropy/CMakeFiles/distclean.dir
+/home/annamaria/Desktop/Entropy_old/Entropy/CMakeFiles/info.dir
+/home/annamaria/Desktop/Entropy_old/Entropy/CMakeFiles/release.dir
+/home/annamaria/Desktop/Entropy_old/Entropy/CMakeFiles/run.dir
+/home/annamaria/Desktop/Entropy_old/Entropy/CMakeFiles/runclean.dir
+/home/annamaria/Desktop/Entropy_old/Entropy/CMakeFiles/strip_comments.dir

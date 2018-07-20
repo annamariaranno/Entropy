@@ -295,14 +295,14 @@
 </target>
 <target name="Build" path="[Targets]/[exe] conservation-laws" targetID="org.eclipse.cdt.make.MakeTargetBuilder">
 <buildCommand>/usr/bin/gmake</buildCommand>
-<buildArguments>-C "/home/people/annamaria/Desktop/Entropy_old/Entropy" -j4</buildArguments>
+<buildArguments>-C "/mnt/raid1/people/annamaria/Desktop/Entropy_old/Entropy" -j4</buildArguments>
 <buildTarget>conservation-laws</buildTarget>
 <stopOnError>true</stopOnError>
 <useDefaultCommand>false</useDefaultCommand>
 </target>
 <target name="Clean" path="[Targets]/[exe] conservation-laws" targetID="org.eclipse.cdt.make.MakeTargetBuilder">
 <buildCommand>/usr/bin/cmake</buildCommand>
-<buildArguments>-E chdir "/home/people/annamaria/Desktop/Entropy_old/Entropy" "/usr/bin/cmake" -P "CMakeFiles/conservation-laws.dir/cmake_clean.cmake"</buildArguments>
+<buildArguments>-E chdir "/mnt/raid1/people/annamaria/Desktop/Entropy_old/Entropy" "/usr/bin/cmake" -P "CMakeFiles/conservation-laws.dir/cmake_clean.cmake"</buildArguments>
 <buildTarget></buildTarget>
 <stopOnError>true</stopOnError>
 <useDefaultCommand>false</useDefaultCommand>
