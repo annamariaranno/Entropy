@@ -212,6 +212,7 @@ class HyperbolicEquation
 	void assemble_system(); //NB: possible only if beta is time-independent
 	void assemble_rhs();
 	void solve_time_step();
+	void assemble_viscosity_matrix();
 	void output_results() const;
 	void process_solution ();
 	void compute_residual();
@@ -255,6 +256,7 @@ class HyperbolicEquation
  	SparsityPattern      sparsity_pattern;
  	SparseMatrix<double> mass_matrix;
  	SparseMatrix<double> transport_matrix;
+ 	SparseMatrix<double> viscosity_matrix;
  	SparseMatrix<double> system_matrix;
  	SparseMatrix<double> system_rhs_matrix;
 
@@ -310,7 +312,7 @@ class HyperbolicEquation
 	 //n_face_q_points (fe_face_values.get_quadrature().size()),
      time(0.),
 	 t_end(1.0),
-	 output_times(t_end*1000),
+	 output_times(t_end*10),
 	 n_times(10*output_times),
 	 time_step(t_end/n_times),//n_times),
      timestep_number(0),
@@ -356,11 +358,11 @@ void HyperbolicEquation<dim>::generate_grid()
 
 			triangulation.refine_global (initial_global_refinement);
 
-			typename Triangulation<dim>::active_cell_iterator
-			cell = triangulation.begin_active(),
-			endc = triangulation.end();
+			//typename Triangulation<dim>::active_cell_iterator
+			//cell = triangulation.begin_active(),
+			//endc = triangulation.end();
 
-			unsigned int face_count=0;
+			//unsigned int face_count=0;
 			/*for (; cell!=endc; ++cell)
 			{
 				if(cell->at_boundary())
@@ -439,6 +441,7 @@ void HyperbolicEquation<dim>::setup_system()
 
 	mass_matrix.reinit(sparsity_pattern);
  	transport_matrix.reinit(sparsity_pattern);
+ 	viscosity_matrix.reinit(sparsity_pattern);
  	system_matrix.reinit(sparsity_pattern);
  	system_rhs_matrix.reinit(sparsity_pattern);
 
@@ -759,6 +762,106 @@ void HyperbolicEquation<dim>::solve_time_step()
 }
 
 template<int dim>
+void HyperbolicEquation<dim>::assemble_viscosity_matrix()
+{
+	typename DoFHandler<dim>::active_cell_iterator
+			cell = dof_handler.begin_active(),
+			endc = dof_handler.end();
+	FEValues<dim>     fe_values(mapping, fe,
+			QGauss<dim>(fe.degree+2),
+			update_values   | update_gradients |
+			update_quadrature_points | update_JxW_values);
+
+	double c_e=0.5;
+	double c_max=0.1/fe.degree;
+
+	//compute denominator: ||E-E_bar||
+
+	Vector<double> entropy(solution);
+	entropy.scale(solution);
+	entropy/=2.;
+	Vector<double> entropy_old(old_solution);
+	entropy_old.scale(old_solution);
+	entropy_old/=2.;
+
+	//compute averaged E
+	const double area(numbers::PI);
+	const double average_entropy(entropy.l1_norm()/area);
+	Vector<double> entropy_difference(entropy);
+	entropy_difference.add(-average_entropy);
+	const double E_difference=entropy_difference.linfty_norm();
+	double nu_max, nu_e, nu_h;
+	double h_min, h_k, f_prime_max; //8*std::pow(numbers::PI,2.);
+
+	for (; cell!=endc; ++cell)
+	{
+		fe_values.reinit(cell);
+
+		h_min=2.;
+		f_prime_max=0.;
+		//double div_F=0.;
+
+		std::vector<double> entr_values(fe_values.get_quadrature().size()), old_entr_values(fe_values.get_quadrature().size());
+		fe_values.get_function_values (entropy, entr_values);
+		fe_values.get_function_values (entropy_old, old_entr_values);
+
+		std::vector<double> entr_res(fe_values.get_quadrature().size());
+
+		std::vector<Tensor<1,dim> > entr_gradient(fe_values.get_quadrature().size());//, old_entr_gradient(fe_values.get_quadrature().size());
+		fe_values.get_function_gradients (entropy, entr_gradient );
+		//fe_values.get_function_gradients (entropy_old, old_entr_gradient );
+
+		for (unsigned int q_point=0; q_point<fe_values.get_quadrature().size(); q_point++)
+		{
+			h_k=fe_values.quadrature_point(q_point).distance(fe_values.quadrature_point(q_point+1));
+
+			if(h_k<h_min)
+				h_min=h_k;
+
+			if(advection_field.value(fe_values.quadrature_point(q_point)).norm() > f_prime_max)
+				f_prime_max =advection_field.value(fe_values.quadrature_point(q_point)).norm();
+
+			entr_res[q_point]=(entr_values[q_point]- old_entr_values[q_point])/time_step
+									+
+						/*div_F = */entr_gradient[q_point]*advection_field.value(fe_values.quadrature_point(q_point));
+
+		}
+
+		nu_max = c_max*h_min*f_prime_max;
+		nu_e = c_e*h_min*h_min*
+				(*(std::max_element(entr_res.begin(),entr_res.end())))/E_difference;
+
+		nu_h=std::min(nu_max,nu_e);
+
+		//entropy viscosity contribution to matrices
+		cell_matrix = 0;
+
+		for (unsigned int q_point=0; q_point<fe_values.get_quadrature().size(); ++q_point)
+		{
+			for (unsigned int i=0; i<dofs_per_cell; ++i)
+			{
+				for (unsigned int j=0; j<dofs_per_cell; ++j)
+				{
+					cell_matrix(i,j) += nu_h *
+							fe_values.shape_grad(j,q_point)   *
+							fe_values.shape_grad(i,q_point) *
+							fe_values.JxW(q_point);
+				}
+			}
+		}
+
+		cell->get_dof_indices (local_dof_indices);
+		for (unsigned int i=0; i<local_dof_indices.size(); ++i)
+		{
+			for (unsigned int j=0; j<local_dof_indices.size(); ++j)
+				viscosity_matrix.add (local_dof_indices[i],
+						local_dof_indices[j],
+						cell_matrix(i,j));
+		}
+	}
+}
+
+template<int dim>
 void HyperbolicEquation<dim>::output_results() const
 {
 		DataOut<dim> data_out;
@@ -893,12 +996,18 @@ void HyperbolicEquation<dim>::compute_residual()
 	    		cell_res[i] += time_step*theta*
 	    				(advection_field.value(fe_values.quadrature_point(q_point))
 	    				*sol_gradient[q_point]
-						*fe_values.shape_value(i,q_point)*W);
+						*fe_values.shape_value(i,q_point)*W
+						//+
+						//diffusion term
+						);
 	    		//lhs: time n-1
 	    		cell_res[i] += time_step*(1-theta)*
 	    				(advection_field.value(fe_values.quadrature_point(q_point))
 	    				*old_sol_gradient[q_point]
-						*fe_values.shape_value(i,q_point)*W);
+						*fe_values.shape_value(i,q_point)*W
+						//+
+						//diffusion term
+						);
 
 	    		if (cell->at_boundary())
 	    		{
@@ -1069,12 +1178,26 @@ void HyperbolicEquation<dim>::run()
 
          	solve_time_step();
 
+         	//assemble_viscosity_matrix();
+
+         	//system_matrix.add(theta*time_step, viscosity_matrix);
+         	//system_rhs_matrix.add(-(1-theta)*time_step, viscosity_matrix);
+
+         	//system_rhs_matrix.vmult(system_rhs, old_solution);
+         	//assemble_rhs();
+
+         	//system_rhs.add(1.,time_dependent_rhs);
+
+         	//constraints.condense (system_matrix, system_rhs);
+
+         	//solve_time_step();
+
         	if(timestep_number<=10)
         	{
         		std::cout << "Time step " << timestep_number << " at t=" << time
         				<< std::endl;
         		//std::cout<< "L2 norm of time dependent rhs should be 0: "<<time_dependent_rhs.l2_norm()<<std::endl;
-        		compute_residual();
+        		//compute_residual();
         	}
 
         	if(timestep_number%output_times==0)
@@ -1091,6 +1214,8 @@ void HyperbolicEquation<dim>::run()
 
         	//clear time-dependent objects before next iteration:
         	time_dependent_rhs.reinit(dof_handler.n_dofs());
+        	//system_matrix.add(-theta*time_step, viscosity_matrix);
+         	//system_rhs_matrix.add((1-theta)*time_step, viscosity_matrix);
       	}
     	//std::cout <<"Last time step:   "<<timestep_number<<std::endl;
     	//triangulation.refine_global() in generate_grid()
