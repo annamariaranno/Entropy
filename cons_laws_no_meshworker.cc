@@ -22,6 +22,7 @@
 #include <deal.II/grid/tria_accessor.h>
 #include <deal.II/grid/tria_iterator.h>
 #include <deal.II/grid/manifold_lib.h>
+#include <deal.II/grid/grid_tools.h>
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_accessor.h>
 #include <deal.II/dofs/dof_tools.h>
@@ -314,14 +315,14 @@ class HyperbolicEquation
 	 //n_face_q_points (fe_face_values.get_quadrature().size()),
      time(0.),
 	 t_end(1.0),
-	 output_times(t_end*100),
+	 output_times(2*t_end*100),
 	 n_times(10*output_times),
 	 time_step(t_end/n_times),//n_times),
      timestep_number(0),
      cycle(0),
-	 cycles_number(2),
+	 cycles_number(4),
 	 initial_global_refinement(1),
-     theta(0.),
+     theta(1.),
 	 solver_tol(1e-8),
 	 lambda(1.)
 	 {
@@ -331,7 +332,7 @@ class HyperbolicEquation
 	 	 face_rhs.reinit (dofs_per_cell);
 	 	 local_dof_indices.resize(dofs_per_cell);
 	 	 local_face_dof_indices.resize(dofs_per_face);
-	 	 //std::cout<< "N_times:   "<<output_times<<std::endl;
+	 	 std::cout<< "time_step:   "<<time_step<<std::endl;
 	 }
 
 template<int dim>
@@ -359,6 +360,14 @@ void HyperbolicEquation<dim>::generate_grid()
 			//GridGenerator::hyper_cube (triangulation,-10,10);
 
 			triangulation.refine_global (initial_global_refinement);
+
+			std::cout<< "Mesh size at cycle 0:   "
+					<<GridTools::minimal_cell_diameter(triangulation)/std::sqrt(2.)
+					<<std::endl;
+			std::cout<< "Mesh size at cycle 2:   "
+								<<GridTools::minimal_cell_diameter(triangulation)/std::sqrt(2.)/std::pow(2.,cycles_number)
+								<<std::endl;
+			//exit(0);
 
 			//typename Triangulation<dim>::active_cell_iterator
 			//cell = triangulation.begin_active(),
@@ -916,7 +925,7 @@ void HyperbolicEquation<dim>::output_results() const
 
 		data_out.build_patches();
 
-		const std::string filename = "solution-"  + Utilities::int_to_string(cycle, 1) + "-"
+		const std::string filename = "visc_solution-"  + Utilities::int_to_string(cycle, 1) + "-"
 									+ Utilities::int_to_string(timestep_number, 3)
 									+ ".vtk";
 		std::ofstream output(filename.c_str());
@@ -1131,10 +1140,14 @@ void HyperbolicEquation<dim>::compute_total_error()
 	double L1_sum, L2_sum;
 	L1_sum=0;
 	L2_sum=0;
+	std::vector<double> L2_errors_squared;
+	L2_errors_squared.push_back(L2_errors[0]*L2_errors[0]);
+
 	for(unsigned int j=0; j<L1_errors.size()-1; j++)
 	{
 		L1_sum+=(L1_errors[j]+L1_errors[j+1]);
-		L2_sum+=(L2_errors[j]+L2_errors[j+1]);
+		L2_errors_squared.push_back(L2_errors[j+1]*L2_errors[j+1]);
+		L2_sum+=(L2_errors_squared[j]+L2_errors_squared[j+1]);
 	}
 	L1_sum*=(time_step/2.);
 	L2_sum*=(time_step/2.);
@@ -1150,7 +1163,7 @@ void HyperbolicEquation<dim>::compute_total_error()
 	convergence_table.add_value("cells", triangulation.n_active_cells());
 	convergence_table.add_value("dofs", dof_handler.n_dofs());
 	convergence_table.add_value("L1", L1_sum);
-	convergence_table.add_value("L2", L2_sum);
+	convergence_table.add_value("L2", std::sqrt(L2_sum));
 }
 
 template <int dim>
@@ -1179,7 +1192,7 @@ void HyperbolicEquation<dim>::write_table()
   	convergence_table.evaluate_convergence_rates("L2", ConvergenceTable::reduction_rate_log2);
   	std::cout << std::endl;
   	convergence_table.write_text(std::cout);
-  	std::string conv_filename = "visc_convergence.tex";
+  	std::string conv_filename = "visc_convergence2.tex";
   	std::ofstream table_file(conv_filename.c_str());
   	convergence_table.write_tex(table_file);
 }
@@ -1200,7 +1213,7 @@ void HyperbolicEquation<dim>::run()
 
     	set_initial_distribution();
 
-    	output_results();
+    	//output_results();
 
     	assemble_system();
 
@@ -1208,15 +1221,11 @@ void HyperbolicEquation<dim>::run()
     		//	<<L2_errors.size()<<std::endl;
 
     	time += time_step; //start from second timestep
+    	timestep_number+=1;
 
     	while (timestep_number < n_times)
       	{
         	time += time_step;
-        	if(timestep_number==0)
-        	{
-        		timestep_number+=1;		//timestep_number==2;
-        	}
-
         	timestep_number++;
 
         	//std::cout <<std::setprecision(20)<< "Time step " << timestep_number << " at t=" << time
@@ -1256,14 +1265,14 @@ void HyperbolicEquation<dim>::run()
         	{
         		std::cout << "Time step " << timestep_number << " at t=" << time
                   	<< std::endl;
-        		output_results();
+        		//output_results();
         	}
 
         	process_solution();
         	//exact_solution.set_time(time);
 
-        	older_solution=old_solution;
-        	ent_old_solution=older_solution;
+        	//older_solution=old_solution;
+        	ent_old_solution=old_solution;
         	ent_solution=solution;
 
         	old_solution = solution;
