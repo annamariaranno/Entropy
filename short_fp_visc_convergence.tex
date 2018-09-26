@@ -1,0 +1,19 @@
+\documentclass[10pt]{report}
+\usepackage{float}
+
+
+\begin{document}
+\begin{table}[H]
+\begin{center}
+\begin{tabular}{|c|r|r|c|c|c|c|c|c|} \hline
+cycle & \# cells & \# dofs & 
+\multicolumn{3}{|c|}{@f$L^1@f$-error} & 
+\multicolumn{3}{|c|}{@f$L^2@f$-error}\\ \hline
+0 & 20 & 25 & 1.002e-02 & - & - & 3.337e-02 & - & -\\ \hline
+1 & 80 & 89 & 3.458e-03 & 2.90 & 1.53 & 1.177e-02 & 2.83 & 1.50\\ \hline
+2 & 320 & 337 & 8.027e-04 & 4.31 & 2.11 & 3.184e-03 & 3.70 & 1.89\\ \hline
+3 & 1280 & 1313 & 1.572e-04 & 5.11 & 2.35 & 6.297e-04 & 5.06 & 2.34\\ \hline
+\end{tabular}
+\end{center}
+\end{table}
+\end{document}

@@ -268,12 +268,12 @@ class HyperbolicEquation
  	//Vector<double>       exact_solution;
  	std::map<types::global_dof_index,double> inflow_boundary;
 
- 	Vector<double>       solution;
- 	Vector<double>       old_solution, older_solution;
+ 	Vector<double>       initial_solution, solution;
+ 	Vector<double>       old_solution; //, older_solution;
  	Vector<double>		 time_dependent_rhs;
  	Vector<double>       system_rhs;
 
- 	Vector<double>		 ent_old_solution, ent_solution;
+ 	Vector<double>		 ent_old_solution, ent_solution, fp_solution;
 
  	double               time, t_end;
  	unsigned int		 output_times, n_times;
@@ -315,12 +315,12 @@ class HyperbolicEquation
 	 //n_face_q_points (fe_face_values.get_quadrature().size()),
      time(0.),
 	 t_end(1.0),
-	 output_times(2*t_end*100),
+	 output_times(t_end*10000),
 	 n_times(10*output_times),
-	 time_step(t_end/n_times),//n_times),
+	 time_step(t_end/(10*output_times)),//n_times),
      timestep_number(0),
      cycle(0),
-	 cycles_number(4),
+	 cycles_number(3),
 	 initial_global_refinement(1),
      theta(1.),
 	 solver_tol(1e-8),
@@ -329,10 +329,12 @@ class HyperbolicEquation
 	 	 cell_matrix.reinit (dofs_per_cell, dofs_per_cell);
 	 	 face_matrix.reinit (dofs_per_face, dofs_per_face);
 	 	 cell_rhs.reinit (dofs_per_cell);
-	 	 face_rhs.reinit (dofs_per_cell);
+	 	 face_rhs.reinit (dofs_per_face);
 	 	 local_dof_indices.resize(dofs_per_cell);
 	 	 local_face_dof_indices.resize(dofs_per_face);
 	 	 std::cout<< "time_step:   "<<time_step<<std::endl;
+         L2_errors.resize(n_times);
+         L1_errors.resize(n_times);
 	 }
 
 template<int dim>
@@ -364,10 +366,11 @@ void HyperbolicEquation<dim>::generate_grid()
 			std::cout<< "Mesh size at cycle 0:   "
 					<<GridTools::minimal_cell_diameter(triangulation)/std::sqrt(2.)
 					<<std::endl;
-			std::cout<< "Mesh size at cycle 2:   "
+			std::cout<< "Mesh size at cycle "<< cycles_number<<":   "
 								<<GridTools::minimal_cell_diameter(triangulation)/std::sqrt(2.)/std::pow(2.,cycles_number)
 								<<std::endl;
 			//exit(0);
+
 
 			//typename Triangulation<dim>::active_cell_iterator
 			//cell = triangulation.begin_active(),
@@ -458,18 +461,20 @@ void HyperbolicEquation<dim>::setup_system()
 
  	MatrixCreator::create_mass_matrix(mapping,
  			dof_handler,
-			QGauss<dim>(fe.degree+1),
+			QGauss<dim>(fe.degree+2),
 			mass_matrix);
 
  	//exact_solution.reinit(exact_sol_dof_handler.n_dofs());
+    initial_solution.reinit(dof_handler.n_dofs());
  	solution.reinit(dof_handler.n_dofs());
  	old_solution.reinit(dof_handler.n_dofs());
- 	older_solution.reinit(dof_handler.n_dofs());
+ 	//older_solution.reinit(dof_handler.n_dofs());
  	time_dependent_rhs.reinit(dof_handler.n_dofs());
  	system_rhs.reinit(dof_handler.n_dofs());
 
  	ent_solution.reinit(dof_handler.n_dofs());
  	ent_old_solution.reinit(dof_handler.n_dofs());
+    fp_solution.reinit(dof_handler.n_dofs());
 
  	VectorTools::interpolate_boundary_values (mapping,
  			dof_handler,
@@ -486,12 +491,13 @@ void HyperbolicEquation<dim>::set_initial_distribution()
 	VectorTools::project(mapping,
 			dof_handler,
 			constraints,
-			QGauss<dim>(fe.degree+1),
+			QGauss<dim>(fe.degree+2),
 			ExactSolution<dim>(1,time),
-			older_solution);
+			initial_solution);
 
-	solution = older_solution;	//for output_results();
-	ent_old_solution=older_solution;
+	solution = initial_solution;//for output_results();
+    //older_solution = initial_solution;
+	ent_old_solution=initial_solution;
 
 	Vector<float> difference_per_cell (triangulation.n_active_cells());
 
@@ -499,31 +505,32 @@ void HyperbolicEquation<dim>::set_initial_distribution()
 
 	VectorTools::integrate_difference (mapping,
 			dof_handler,
-			older_solution,
+			initial_solution,
 			ExactSolution<dim>(1,time),
 			difference_per_cell,
-			QGauss<dim>(fe.degree+3), //to have less integration error
+			QGauss<dim>(fe.degree+2), //to have less integration error
 			VectorTools::L2_norm);
 
 	//it's more an interpolation error as it is for time=0
 	//L2_errors.push_back(difference_per_cell.l2_norm());
 	std::cout<< "L2 initial error:"<< difference_per_cell.l2_norm()<<std::endl;
-	L2_errors.push_back(difference_per_cell.l2_norm());
+	L2_errors[0]=difference_per_cell.l2_norm();
+    //std::cout<< "L2 initial error:"<< L2_errors[0]<<std::endl;
 
 	VectorTools::integrate_difference (mapping,
 			dof_handler,
-			older_solution,
+			initial_solution,
 			ExactSolution<dim>(1,time),
 			difference_per_cell,
-			QGauss<dim>(fe.degree+3), //to have less integration error
+			QGauss<dim>(fe.degree+2), //to have less integration error
 			VectorTools::L1_norm);
 
-	L1_errors.push_back(difference_per_cell.l1_norm());
+	L1_errors[0]=difference_per_cell.l1_norm();
 
 	VectorTools::project(mapping,
 			dof_handler,
 			constraints,
-			QGauss<dim>(fe.degree+1),
+			QGauss<dim>(fe.degree+2),
 			ExactSolution<dim>(1,time+time_step),
 			old_solution);
 
@@ -537,26 +544,26 @@ void HyperbolicEquation<dim>::set_initial_distribution()
 
 	VectorTools::integrate_difference (mapping,
 			dof_handler,
-			older_solution,
+			old_solution,
 			ExactSolution<dim>(1,time+time_step),
 			new_difference_per_cell,
-			QGauss<dim>(fe.degree+3), //to have less integration error
+			QGauss<dim>(fe.degree+2), //to have less integration error
 			VectorTools::L2_norm);
 
 	//it's more an interpolation error as it is for time=0
 	//L2_errors.push_back(difference_per_cell.l2_norm());
-	//std::cout<< "L2 initial error:"<< difference_per_cell.l2_norm()<<std::endl;
-	L2_errors.push_back(new_difference_per_cell.l2_norm());
+	std::cout<< "L2 second error:"<< new_difference_per_cell.l2_norm()<<std::endl;
+	L2_errors[1]=new_difference_per_cell.l2_norm();
 
 	VectorTools::integrate_difference (mapping,
 			dof_handler,
-			older_solution,
+			old_solution,
 			ExactSolution<dim>(1,time+time_step),
 			new_difference_per_cell,
-			QGauss<dim>(fe.degree+3), //to have less integration error
+			QGauss<dim>(fe.degree+2), //to have less integration error
 			VectorTools::L1_norm);
 
-	L1_errors.push_back(new_difference_per_cell.l1_norm());
+	L1_errors[1]=new_difference_per_cell.l1_norm();
 }
 
 template <int dim>
@@ -852,6 +859,14 @@ void HyperbolicEquation<dim>::assemble_viscosity_matrix()
 		fe_values.reinit(cell);
 
 		h_min=2.;
+
+		for(unsigned int i=0; i<3; i++)
+		{
+			h_k=cell->vertex(i).distance(cell->vertex(i+1));
+			if(h_k<h_min)
+				h_min=h_k;
+		}
+
 		f_prime_max=0.;
 		//double div_F=0.;
 
@@ -864,13 +879,12 @@ void HyperbolicEquation<dim>::assemble_viscosity_matrix()
 		std::vector<Tensor<1,dim> > entr_gradient(fe_values.get_quadrature().size());//, old_entr_gradient(fe_values.get_quadrature().size());
 		fe_values.get_function_gradients (entropy, entr_gradient );
 		//fe_values.get_function_gradients (entropy_old, old_entr_gradient );
+		//std::cout<<"Quadrature points:   "<<fe_values.n_quadrature_points<<std::endl;
 
-		for (unsigned int q_point=0; q_point<fe_values.get_quadrature().size(); q_point++)
+		for (unsigned int q_point=0; q_point<fe_values.n_quadrature_points; ++q_point)
 		{
-			h_k=fe_values.quadrature_point(q_point).distance(fe_values.quadrature_point(q_point+1));
-
-			if(h_k<h_min)
-				h_min=h_k;
+			//std::cout<<"  "<< q_point<<std::endl;
+			//h_k=fe_values.quadrature_point(q_point).distance(fe_values.quadrature_point(q_point+1));
 
 			if(advection_field.value(fe_values.quadrature_point(q_point)).norm() > f_prime_max)
 				f_prime_max =advection_field.value(fe_values.quadrature_point(q_point)).norm();
@@ -925,7 +939,7 @@ void HyperbolicEquation<dim>::output_results() const
 
 		data_out.build_patches();
 
-		const std::string filename = "visc_solution-"  + Utilities::int_to_string(cycle, 1) + "-"
+		const std::string filename = "fp_visc_solution-"  + Utilities::int_to_string(cycle, 1) + "-"
 									+ Utilities::int_to_string(timestep_number, 3)
 									+ ".vtk";
 		std::ofstream output(filename.c_str());
@@ -959,11 +973,12 @@ void HyperbolicEquation<dim>::process_solution ()
 				solution,
 				ExactSolution<dim>(1,time),
 				difference_per_cell,
-				QGauss<dim>(fe.degree+3),
+				QGauss<dim>(fe.degree+2),
 				VectorTools::L2_norm);
 
 	//const double L2_error = difference_per_cell.l2_norm();
-	L2_errors.push_back(difference_per_cell.l2_norm());
+	//L2_errors.push_back(difference_per_cell.l2_norm());
+	L2_errors[timestep_number]=difference_per_cell.l2_norm();
 
 	if(timestep_number%output_times==0)
 	{
@@ -979,7 +994,7 @@ void HyperbolicEquation<dim>::process_solution ()
 			VectorTools::L1_norm);
 
 	//const double L1_error = difference_per_cell.l1_norm();
-	L1_errors.push_back(difference_per_cell.l1_norm());
+	L1_errors[timestep_number]=difference_per_cell.l1_norm();
 
 	/*if(timestep_number==n_times)
 	{
@@ -1141,24 +1156,32 @@ void HyperbolicEquation<dim>::compute_total_error()
 	L1_sum=0;
 	L2_sum=0;
 	std::vector<double> L2_errors_squared;
-	L2_errors_squared.push_back(L2_errors[0]*L2_errors[0]);
 
+	L2_errors_squared.push_back(L2_errors[0]*L2_errors[0]);
+	/*if(cycle==1)
+	{
+	std::cout<< "L1, L2 errors vector size:   "<<L1_errors.size()<< ",   "
+			<<L2_errors.size()<<std::endl;
+	exit(0);
+	}*/
 	for(unsigned int j=0; j<L1_errors.size()-1; j++)
 	{
+		//std::cout<<"Error not here"<<std::endl;
 		L1_sum+=(L1_errors[j]+L1_errors[j+1]);
 		L2_errors_squared.push_back(L2_errors[j+1]*L2_errors[j+1]);
 		L2_sum+=(L2_errors_squared[j]+L2_errors_squared[j+1]);
+		//std::cout<<"Itearotor j  "<<j<<std::endl;
 	}
+	//std::cout<<"Error not here"<<std::endl;
 	L1_sum*=(time_step/2.);
 	L2_sum*=(time_step/2.);
-
+	//std::cout<<"Error not here"<<std::endl;
 	//total_L1_error.push_back(L1_sum);
 	//total_L2_error.push_back(L2_sum);
 	std::cout<< "L1, L2 errors vector size:   "<<L1_errors.size()<< ",   "
 		<<L2_errors.size()<<std::endl;
-	L1_errors.clear();
-	L2_errors.clear();
-
+	L1_errors.clear(); L1_errors.resize(n_times);
+	L2_errors.clear(); L2_errors.resize(n_times);
 	convergence_table.add_value("cycle", cycle);
 	convergence_table.add_value("cells", triangulation.n_active_cells());
 	convergence_table.add_value("dofs", dof_handler.n_dofs());
@@ -1182,7 +1205,7 @@ void HyperbolicEquation<dim>::write_table()
 	std::cout << std::endl;
 	convergence_table.write_text(std::cout);
 
-	std::string error_filename = "visc_error.tex";
+	std::string error_filename = "fp_visc_error.tex";
 	std::ofstream error_table_file(error_filename.c_str());
 	convergence_table.write_tex(error_table_file);
 
@@ -1192,7 +1215,7 @@ void HyperbolicEquation<dim>::write_table()
   	convergence_table.evaluate_convergence_rates("L2", ConvergenceTable::reduction_rate_log2);
   	std::cout << std::endl;
   	convergence_table.write_text(std::cout);
-  	std::string conv_filename = "visc_convergence2.tex";
+  	std::string conv_filename = "fp_visc_convergence.tex";
   	std::ofstream table_file(conv_filename.c_str());
   	convergence_table.write_tex(table_file);
 }
@@ -1204,6 +1227,8 @@ void HyperbolicEquation<dim>::run()
 	//AND THEN INTERPOLATE SOLUTION ON THAT MORE REFINED GRID
 	for(; cycle<=cycles_number; cycle++)
     {
+		unsigned int exit_times=0, fp_times=0;
+		double tol= 1e-2;
 		timestep_number = 0;
     	time            = 0;
 
@@ -1213,7 +1238,7 @@ void HyperbolicEquation<dim>::run()
 
     	set_initial_distribution();
 
-    	//output_results();
+    	output_results();
 
     	assemble_system();
 
@@ -1225,6 +1250,7 @@ void HyperbolicEquation<dim>::run()
 
     	while (timestep_number < n_times)
       	{
+            //std::vector<Vector<double>> fp_solutions;
         	time += time_step;
         	timestep_number++;
 
@@ -1235,23 +1261,104 @@ void HyperbolicEquation<dim>::run()
 
          	//system_rhs.add(1.,time_dependent_rhs);
 
-         	if(timestep_number>=2)
-         	{
-         		assemble_viscosity_matrix();
+            //double current_fp_L2_error;
 
-         		system_matrix.add(theta*time_step, viscosity_matrix);
-         		system_rhs_matrix.add(-(1-theta)*time_step, viscosity_matrix);
+            assemble_viscosity_matrix();
 
-         	}
+         	system_matrix.add(theta*time_step, viscosity_matrix);
+            system_rhs_matrix.add(-(1-theta)*time_step, viscosity_matrix);
 
-			system_rhs_matrix.vmult(system_rhs, old_solution);
-			assemble_rhs();
+         	system_rhs_matrix.vmult(system_rhs, old_solution);
+         	assemble_rhs();
 
-			system_rhs.add(1.,time_dependent_rhs);
+         	system_rhs.add(1.,time_dependent_rhs);
 
          	//constraints.condense (system_matrix, system_rhs);
 
          	solve_time_step();
+
+         	process_solution();
+            //current_fp_L2_error=L2_errors[timestep_number];
+
+            time_dependent_rhs.reinit(dof_handler.n_dofs());
+            system_matrix.add(-theta*time_step, viscosity_matrix);
+            system_rhs_matrix.add((1-theta)*time_step, viscosity_matrix);
+
+         	//if(timestep_number>=2)
+            /*if(std::fabs(L2_errors[timestep_number]-L2_errors[0])>(tol))
+            {
+                //std::cout<<"Difference : "<< L2_errors[timestep_number]-L2_errors[0]<<std::endl;
+                unsigned int fp_steps=0;
+                
+				while(fp_steps<10)
+				{
+					current_fp_L2_error=L2_errors[timestep_number];
+					//ent_old_solution=old_solution;
+					ent_solution=solution;
+					//fp_solutions.push_back(old_solution);
+					assemble_viscosity_matrix();
+
+					system_matrix.add(theta*time_step, viscosity_matrix);
+					system_rhs_matrix.add(-(1-theta)*time_step, viscosity_matrix);
+
+					system_rhs_matrix.vmult(system_rhs, old_solution);
+					assemble_rhs();
+
+					system_rhs.add(1.,time_dependent_rhs);
+
+					//constraints.condense (system_matrix, system_rhs);
+
+					solve_time_step();
+
+					process_solution();
+					//std::cout<<"No problem here"<<std::endl;
+
+					fp_steps++;
+
+					time_dependent_rhs.reinit(dof_handler.n_dofs());
+					system_matrix.add(-theta*time_step, viscosity_matrix);
+					system_rhs_matrix.add((1-theta)*time_step, viscosity_matrix);
+
+					//update fp_solution
+
+					if(L2_errors[timestep_number]>current_fp_L2_error)
+					{
+						exit_times++;
+						//std::cout<< "Exit, L2_Errors:   "<<current_fp_L2_error<<"    "<<L2_errors[timestep_number]<<std::endl;
+						break;
+					}
+
+					else
+					{
+						if(std::fabs(L2_errors[timestep_number]-L2_errors[0])<(2.*tol))
+						{
+							fp_times++;
+							std::cout<<"fp iterations:   "<<fp_steps<<std::endl;
+							std::cout<<"L2 errors before and after:   "<<current_fp_L2_error<<"    "<< L2_errors[timestep_number]<<std::endl;
+							break;
+						}
+
+
+						if(fp_steps==10)
+						{
+							std::cout<< "Maximum number of fix point iteration reached!"<<std::endl;
+							std::cout<< "L2_errors:   "<<current_fp_L2_error<<"    "<<L2_errors[timestep_number]<<std::endl;
+						}
+					}
+
+				}
+				//std::cout<<"fp iterations:   "<<fp_steps<<std::endl;
+            }*/
+
+			//system_rhs_matrix.vmult(system_rhs, old_solution);
+			//assemble_rhs();
+
+			//system_rhs.add(1.,time_dependent_rhs);
+
+         	//constraints.condense (system_matrix, system_rhs);
+
+         	//solve_time_step();
+
 
         	if(timestep_number<=10)
         	{
@@ -1265,26 +1372,29 @@ void HyperbolicEquation<dim>::run()
         	{
         		std::cout << "Time step " << timestep_number << " at t=" << time
                   	<< std::endl;
-        		//output_results();
+        		//std::cout<<"Fixed point steps"<<fp_steps<<std::endl;
+        		output_results();
         	}
 
-        	process_solution();
+        	//process_solution();
         	//exact_solution.set_time(time);
 
         	//older_solution=old_solution;
         	ent_old_solution=old_solution;
         	ent_solution=solution;
-
         	old_solution = solution;
 
         	//clear time-dependent objects before next iteration:]
-        	if(timestep_number>=2)
+        	/*if(timestep_number>=2)
          	{
          		system_matrix.add(-theta*time_step, viscosity_matrix);
          		system_rhs_matrix.add((1-theta)*time_step, viscosity_matrix);
-         	}
+         	}*/
 
         	time_dependent_rhs.reinit(dof_handler.n_dofs());
+            //std::cout<<"No problem here"<<std::endl;
+            viscosity_matrix.reinit(sparsity_pattern);
+            //std::cout<<"No problem here"<<std::endl;
         	//system_matrix.add(-theta*time_step, viscosity_matrix);
          	//system_rhs_matrix.add((1-theta)*time_step, viscosity_matrix);
       	}
@@ -1293,6 +1403,9 @@ void HyperbolicEquation<dim>::run()
     	compute_total_error();
     	inflow_boundary.clear();
     	//dof_handler.clear();
+        tol/=10;
+        //std::cout<<"Fp times:  "<<fp_times<<std::endl;
+       // std::cout<<"Exit times:  "<<exit_times<<std::endl;
     }
 
     write_table();
